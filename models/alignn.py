@@ -559,6 +559,7 @@ class ALIGNNConfig(BaseSettings):
     fine_grained_dropout: float = 0.1
     fine_grained_use_projection: bool = True  # Project inputs to same dimension
     mask_stopwords: bool = False  # Mask stopwords in fine-grained attention during training
+    stopwords_dir: str = ""  # Custom stopwords directory path (empty = use default)
 
     # Middle fusion settings
     use_middle_fusion: bool = False
@@ -790,7 +791,7 @@ class ALIGNN(nn.Module):
 
         # Load stopwords if masking is enabled
         if self.mask_stopwords:
-            self.stopwords = self._load_stopwords()
+            self.stopwords = self._load_stopwords(config.stopwords_dir)
             print(f"✅ 停用词 masking 已启用: {len(self.stopwords)} 个停用词")
         else:
             self.stopwords = None
@@ -842,25 +843,34 @@ class ALIGNN(nn.Module):
         elif config.link == "logit":
             self.link = torch.sigmoid
 
-    def _load_stopwords(self):
-        """Load stopwords from files in stopwords/en/ directory"""
+    def _load_stopwords(self, custom_dir=""):
+        """Load stopwords from files in stopwords/en/ directory
+
+        Args:
+            custom_dir: Custom stopwords directory path (empty = use default)
+        """
         from pathlib import Path
         import os
 
         stopwords = set()
 
-        # Try multiple possible paths
-        possible_dirs = [
-            Path(__file__).parent.parent / 'stopwords' / 'en',
-            Path('./stopwords/en'),
-            Path('../stopwords/en'),
-        ]
+        # Use custom directory if provided
+        if custom_dir and Path(custom_dir).exists():
+            stopwords_dir = Path(custom_dir)
+            print(f"📂 使用自定义停用词目录: {stopwords_dir}")
+        else:
+            # Try multiple possible paths
+            possible_dirs = [
+                Path(__file__).parent.parent / 'stopwords' / 'en',
+                Path('./stopwords/en'),
+                Path('../stopwords/en'),
+            ]
 
-        stopwords_dir = None
-        for d in possible_dirs:
-            if d.exists():
-                stopwords_dir = d
-                break
+            stopwords_dir = None
+            for d in possible_dirs:
+                if d.exists():
+                    stopwords_dir = d
+                    break
 
         if stopwords_dir and stopwords_dir.exists():
             txt_files = list(stopwords_dir.glob('*.txt'))

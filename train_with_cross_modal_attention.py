@@ -148,6 +148,8 @@ def get_parser():
                         help='细粒度注意力是否使用投影层')
     parser.add_argument('--mask_stopwords', type=int, default=0,
                         help='是否在训练时mask停用词 (0/1)')
+    parser.add_argument('--stopwords_dir', type=str, default='',
+                        help='停用词目录路径 (默认: ./stopwords/en/)')
 
     # 对比学习参数
     parser.add_argument('--use_contrastive', type=bool, default=False,
@@ -449,6 +451,7 @@ def create_config(args):
         fine_grained_dropout=args.fine_grained_dropout,
         fine_grained_use_projection=args.fine_grained_use_projection,
         mask_stopwords=bool(args.mask_stopwords),
+        stopwords_dir=args.stopwords_dir,
         link="identity",
         zero_inflated=False,
         classification=False
@@ -562,6 +565,8 @@ def main():
         print(f"  Dropout率: {args.fine_grained_dropout}")
         print(f"  使用投影: {args.fine_grained_use_projection}")
         print(f"  停用词Masking: {bool(args.mask_stopwords)}")
+        if args.mask_stopwords:
+            print(f"  停用词目录: {args.stopwords_dir if args.stopwords_dir else '默认 (./stopwords/en/)'}")
 
     print(f"\n对比学习配置:")
     print(f"  启用: {args.use_contrastive}")
