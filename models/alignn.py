@@ -558,6 +558,7 @@ class ALIGNNConfig(BaseSettings):
     fine_grained_num_heads: int = 8
     fine_grained_dropout: float = 0.1
     fine_grained_use_projection: bool = True  # Project inputs to same dimension
+    mask_stopwords: bool = False  # Mask stopwords in fine-grained attention during training
 
     # Middle fusion settings
     use_middle_fusion: bool = False
@@ -785,6 +786,15 @@ class ALIGNN(nn.Module):
 
         # Fine-grained cross-modal attention module (atom-token level)
         self.use_fine_grained_attention = config.use_fine_grained_attention
+        self.mask_stopwords = config.mask_stopwords
+
+        # Load stopwords if masking is enabled
+        if self.mask_stopwords:
+            self.stopwords = self._load_stopwords()
+            print(f"✅ 停用词 masking 已启用: {len(self.stopwords)} 个停用词")
+        else:
+            self.stopwords = None
+
         if self.use_fine_grained_attention:
             self.fine_grained_attention = FineGrainedCrossModalAttention(
                 node_dim=config.hidden_features,  # Node features from ALIGNN layers
@@ -832,6 +842,80 @@ class ALIGNN(nn.Module):
         elif config.link == "logit":
             self.link = torch.sigmoid
 
+    def _load_stopwords(self):
+        """Load stopwords from files in stopwords/en/ directory"""
+        from pathlib import Path
+        import os
+
+        stopwords = set()
+
+        # Try multiple possible paths
+        possible_dirs = [
+            Path(__file__).parent.parent / 'stopwords' / 'en',
+            Path('./stopwords/en'),
+            Path('../stopwords/en'),
+        ]
+
+        stopwords_dir = None
+        for d in possible_dirs:
+            if d.exists():
+                stopwords_dir = d
+                break
+
+        if stopwords_dir and stopwords_dir.exists():
+            txt_files = list(stopwords_dir.glob('*.txt'))
+            for txt_file in txt_files:
+                try:
+                    with open(txt_file, 'r', encoding='utf-8') as f:
+                        for line in f:
+                            word = line.strip().lower()
+                            if word and not word.startswith('#'):
+                                stopwords.add(word)
+                except:
+                    pass
+        else:
+            # Fallback to basic stopwords
+            stopwords = {
+                'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+                'to', 'of', 'in', 'for', 'on', 'with', 'at', 'by', 'from', 'as',
+                'and', 'or', 'but', 'not', 'no', 'if', 'that', 'this', 'it', 'its',
+            }
+
+        # Add BERT special tokens
+        special_tokens = {'[CLS]', '[SEP]', '[PAD]', '[UNK]', '[MASK]'}
+        stopwords.update(special_tokens)
+
+        return stopwords
+
+    def _create_stopword_mask(self, input_ids, attention_mask):
+        """Create mask to exclude stopwords from attention
+
+        Args:
+            input_ids: [batch_size, seq_len] token IDs
+            attention_mask: [batch_size, seq_len] original attention mask
+
+        Returns:
+            combined_mask: [batch_size, seq_len] mask with stopwords excluded
+        """
+        if self.stopwords is None:
+            return attention_mask
+
+        batch_size, seq_len = input_ids.shape
+        stopword_mask = torch.ones_like(attention_mask)
+
+        # Convert token IDs to tokens and check for stopwords
+        for b in range(batch_size):
+            tokens = tokenizer.convert_ids_to_tokens(input_ids[b].cpu().tolist())
+            for i, token in enumerate(tokens):
+                # Check if token is a stopword (case-insensitive)
+                token_lower = token.lower().replace('##', '')
+                if token_lower in self.stopwords or token in self.stopwords:
+                    stopword_mask[b, i] = 0
+
+        # Combine with original attention mask
+        combined_mask = attention_mask * stopword_mask
+        return combined_mask
+
     def forward(self, g: Union[Tuple[dgl.DGLGraph, dgl.DGLGraph], dgl.DGLGraph],
                return_features=False, return_attention=False):
         """ALIGNN : start with `atom_features`.
@@ -871,6 +955,15 @@ class ALIGNN(nn.Module):
         # For fine-grained attention: keep all tokens
         text_tokens = last_hidden_state  # [batch, seq_len, 768]
         attention_mask = encodings['attention_mask']  # [batch, seq_len]
+
+        # Apply stopword masking if enabled
+        if self.mask_stopwords and self.use_fine_grained_attention:
+            token_mask = self._create_stopword_mask(
+                encodings['input_ids'],
+                attention_mask
+            )
+        else:
+            token_mask = attention_mask
 
         # For backward compatibility: CLS token + projection
         cls_emb = last_hidden_state[:, 0, :]  # [batch, 768]
@@ -928,7 +1021,7 @@ class ALIGNN(nn.Module):
                         node_features_batched,
                         text_tokens,
                         node_mask=node_mask,
-                        token_mask=attention_mask.bool(),
+                        token_mask=token_mask.bool(),
                         return_attention=True
                     )
             else:
@@ -936,7 +1029,7 @@ class ALIGNN(nn.Module):
                     node_features_batched,
                     text_tokens,
                     node_mask=node_mask,
-                    token_mask=attention_mask.bool()
+                    token_mask=token_mask.bool()
                 )
 
             # Convert back to DGL format: [batch, max_atoms, node_dim] -> [total_atoms, node_dim]
