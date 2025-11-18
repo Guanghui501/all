@@ -559,6 +559,7 @@ class ALIGNNConfig(BaseSettings):
     fine_grained_dropout: float = 0.1
     fine_grained_use_projection: bool = True  # Project inputs to same dimension
     mask_stopwords: bool = False  # Mask stopwords in fine-grained attention during training
+    remove_stopwords: bool = False  # Remove stopwords from text before BERT encoding
     stopwords_dir: str = ""  # Custom stopwords directory path (empty = use default)
 
     # Middle fusion settings
@@ -788,11 +789,15 @@ class ALIGNN(nn.Module):
         # Fine-grained cross-modal attention module (atom-token level)
         self.use_fine_grained_attention = config.use_fine_grained_attention
         self.mask_stopwords = config.mask_stopwords
+        self.remove_stopwords = config.remove_stopwords
 
-        # Load stopwords if masking is enabled
-        if self.mask_stopwords:
+        # Load stopwords if masking or removal is enabled
+        if self.mask_stopwords or self.remove_stopwords:
             self.stopwords = self._load_stopwords(config.stopwords_dir)
-            print(f"✅ 停用词 masking 已启用: {len(self.stopwords)} 个停用词")
+            if self.remove_stopwords:
+                print(f"✅ 停用词删除已启用: {len(self.stopwords)} 个停用词 (BERT编码前删除)")
+            elif self.mask_stopwords:
+                print(f"✅ 停用词 masking 已启用: {len(self.stopwords)} 个停用词 (注意力计算时屏蔽)")
         else:
             self.stopwords = None
 
@@ -949,6 +954,30 @@ class ALIGNN(nn.Module):
         combined_mask = attention_mask * stopword_mask
         return combined_mask
 
+    def _remove_stopwords_from_text(self, text_list):
+        """Remove stopwords from text before BERT encoding
+
+        Args:
+            text_list: List of text strings
+
+        Returns:
+            List of filtered text strings
+        """
+        if self.stopwords is None:
+            return text_list
+
+        filtered_texts = []
+        for text in text_list:
+            # Split by whitespace
+            words = text.split()
+            # Filter out stopwords
+            filtered_words = [w for w in words if w.lower() not in self.stopwords]
+            # Rejoin
+            filtered_text = ' '.join(filtered_words)
+            filtered_texts.append(filtered_text)
+
+        return filtered_texts
+
     def forward(self, g: Union[Tuple[dgl.DGLGraph, dgl.DGLGraph], dgl.DGLGraph],
                return_features=False, return_attention=False):
         """ALIGNN : start with `atom_features`.
@@ -976,6 +1005,10 @@ class ALIGNN(nn.Module):
 
         g = g.local_var()
 
+
+        # Remove stopwords from text before BERT encoding if enabled
+        if self.remove_stopwords:
+            text = self._remove_stopwords_from_text(text)
 
         # Text Encoding
         norm_sents = [normalize(s) for s in text]
