@@ -543,6 +543,9 @@ class ALIGNNConfig(BaseSettings):
     # fc_features: int = 64
     output_features: int = 1
 
+    # Dropout for graph layers (regularization)
+    graph_dropout: float = 0.0  # Dropout for ALIGNN and GCN layers
+
     # Cross-modal attention settings (late fusion)
     use_cross_modal_attention: bool = True
     cross_modal_hidden_dim: int = 256
@@ -591,7 +594,7 @@ class EdgeGatedGraphConv(nn.Module):
     """
 
     def __init__(
-        self, input_features: int, output_features: int, residual: bool = True
+        self, input_features: int, output_features: int, residual: bool = True, dropout: float = 0.0
     ):
         """Initialize parameters for ALIGNN update."""
         super().__init__()
@@ -609,6 +612,9 @@ class EdgeGatedGraphConv(nn.Module):
         self.src_update = nn.Linear(input_features, output_features)
         self.dst_update = nn.Linear(input_features, output_features)
         self.bn_nodes = nn.BatchNorm1d(output_features)
+
+        # Dropout for regularization
+        self.dropout = nn.Dropout(dropout)
 
     def forward(
         self,
@@ -657,6 +663,10 @@ class EdgeGatedGraphConv(nn.Module):
         x = F.silu(self.bn_nodes(x))
         y = F.silu(self.bn_edges(m))
 
+        # Apply dropout for regularization
+        x = self.dropout(x)
+        y = self.dropout(y)
+
         if self.residual:
             x = node_feats + x
             y = edge_feats + y
@@ -671,11 +681,12 @@ class ALIGNNConv(nn.Module):
         self,
         in_features: int,
         out_features: int,
+        dropout: float = 0.0,
     ):
         """Set up ALIGNN parameters."""
         super().__init__()
-        self.node_update = EdgeGatedGraphConv(in_features, out_features)
-        self.edge_update = EdgeGatedGraphConv(out_features, out_features)
+        self.node_update = EdgeGatedGraphConv(in_features, out_features, dropout=dropout)
+        self.edge_update = EdgeGatedGraphConv(out_features, out_features, dropout=dropout)
 
     def forward(self,g: dgl.DGLGraph,lg: dgl.DGLGraph,x: torch.Tensor,y: torch.Tensor,z: torch.Tensor,):
         """Node and Edge updates for ALIGNN layer.
@@ -740,13 +751,13 @@ class ALIGNN(nn.Module):
 
         self.alignn_layers = nn.ModuleList(
             [
-                ALIGNNConv(config.hidden_features,config.hidden_features)
+                ALIGNNConv(config.hidden_features, config.hidden_features, dropout=config.graph_dropout)
                 for idx in range(config.alignn_layers)
             ]
         )
         self.gcn_layers = nn.ModuleList(
             [
-                EdgeGatedGraphConv(config.hidden_features, config.hidden_features)
+                EdgeGatedGraphConv(config.hidden_features, config.hidden_features, dropout=config.graph_dropout)
                 for idx in range(config.gcn_layers)
             ]
         )

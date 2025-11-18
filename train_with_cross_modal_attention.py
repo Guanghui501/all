@@ -107,6 +107,8 @@ def get_parser():
                         help='GCN层数')
     parser.add_argument('--hidden_features', type=int, default=256,
                         help='隐藏层特征维度')
+    parser.add_argument('--graph_dropout', type=float, default=0.0,
+                        help='ALIGNN/GCN层的dropout率（用于正则化）')
 
     # 跨模态注意力参数（晚期融合）
     parser.add_argument('--use_cross_modal', type=bool, default=True,
@@ -164,6 +166,8 @@ def get_parser():
                         help='随机种子')
     parser.add_argument('--num_workers', type=int, default=0,
                         help='数据加载workers数量')
+    parser.add_argument('--early_stopping_patience', type=int, default=None,
+                        help='Early stopping耐心值（无改善的epoch数）')
 
     return parser
 
@@ -419,6 +423,8 @@ def create_config(args):
         embedding_features=64,
         hidden_features=args.hidden_features,
         output_features=1,
+        # Graph层 dropout（正则化）
+        graph_dropout=args.graph_dropout,
         # 跨模态注意力配置（晚期融合）
         use_cross_modal_attention=args.use_cross_modal,
         cross_modal_hidden_dim=args.cross_modal_hidden_dim,
@@ -490,7 +496,7 @@ def create_config(args):
         "max_neighbors": 12,
         "keep_data_order": False,
         "distributed": False,
-        "n_early_stopping": None,
+        "n_early_stopping": args.early_stopping_patience,
         "output_dir": args.output_dir,
 
         # 模型配置对象（而不是字典）
@@ -528,6 +534,7 @@ def main():
     print(f"  ALIGNN层数: {args.alignn_layers}")
     print(f"  GCN层数: {args.gcn_layers}")
     print(f"  隐藏层维度: {args.hidden_features}")
+    print(f"  Graph层Dropout: {args.graph_dropout}")
 
     print(f"\n跨模态注意力配置（晚期融合）:")
     print(f"  启用: {args.use_cross_modal}")

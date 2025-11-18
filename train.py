@@ -231,6 +231,10 @@ def train_dgl(config: Union[TrainingConfig, Dict[str, Any]],model: nn.Module = N
     # set up default metrics
     metrics = {"loss": Loss(criterion), "mae": MeanAbsoluteError()}
 
+    # Gradient clipping for stability
+    grad_clip = 1.0
+    print(f"\n📎 梯度裁剪已启用: max_norm = {grad_clip}")
+
     if use_contrastive:
         print(f"\n🔥 对比学习已启用:")
         print(f"  - 损失权重: {contrastive_weight}")
@@ -261,13 +265,30 @@ def train_dgl(config: Union[TrainingConfig, Dict[str, Any]],model: nn.Module = N
                 total_loss = criterion(y_pred, y)
 
             total_loss.backward()
+            # Apply gradient clipping
+            torch.nn.utils.clip_grad_norm_(net.parameters(), grad_clip)
             optimizer.step()
 
             return total_loss.item()
 
         trainer = ignite.engine.Engine(custom_train_step)
     else:
-        trainer = create_supervised_trainer(net,optimizer,criterion,prepare_batch=prepare_batch,device=device,deterministic=deterministic)
+        # Custom training function with gradient clipping
+        def train_step_with_clip(engine, batch):
+            net.train()
+            optimizer.zero_grad()
+            x, y = prepare_batch(batch)
+            y_pred = net(x)
+            if isinstance(y_pred, dict):
+                y_pred = y_pred['predictions']
+            loss = criterion(y_pred, y)
+            loss.backward()
+            # Apply gradient clipping
+            torch.nn.utils.clip_grad_norm_(net.parameters(), grad_clip)
+            optimizer.step()
+            return loss.item()
+
+        trainer = ignite.engine.Engine(train_step_with_clip)
 
     if resume ==1:
         trainer.load_state_dict(checkpoint["trainer"])
@@ -302,6 +323,12 @@ def train_dgl(config: Union[TrainingConfig, Dict[str, Any]],model: nn.Module = N
     best_loss = float('inf')
     best_val_mae = float('inf')
     best_test_mae = float('inf')
+
+    # Early stopping setup
+    early_stopping_patience = config.n_early_stopping
+    epochs_without_improvement = 0
+    if early_stopping_patience:
+        print(f"\n⏹️ Early Stopping 已启用: patience = {early_stopping_patience}")
 
     if config.write_checkpoint:
         # model checkpointing
@@ -372,9 +399,10 @@ def train_dgl(config: Union[TrainingConfig, Dict[str, Any]],model: nn.Module = N
             pbar.log_message(f"Val_MAE: {vmetrics['mae']:.4f}")
             pbar.log_message(f"Test_MAE: {tstmetrics['mae']:.4f}")
 
-        nonlocal best_loss, best_val_mae, best_test_mae
+        nonlocal best_loss, best_val_mae, best_test_mae, epochs_without_improvement
 
         # Save best validation model
+        improved = False
         if vmetrics['mae'] < best_val_mae:
             best_val_mae = vmetrics['mae']
             best_val_checkpoint = {
@@ -386,6 +414,8 @@ def train_dgl(config: Union[TrainingConfig, Dict[str, Any]],model: nn.Module = N
             }
             torch.save(best_val_checkpoint, os.path.join(config.output_dir, "best_val_model.pt"))
             print(f"✅ Saved best val model (MAE: {best_val_mae:.4f}) at epoch {engine.state.epoch}")
+            improved = True
+            epochs_without_improvement = 0
 
         # Save best test model
         if tstmetrics['mae'] < best_test_mae:
@@ -402,7 +432,18 @@ def train_dgl(config: Union[TrainingConfig, Dict[str, Any]],model: nn.Module = N
 
         if tstmetrics['mae'] < best_loss:
             best_loss = tstmetrics['mae']
+
+        # Early stopping check
+        if not improved:
+            epochs_without_improvement += 1
+            if early_stopping_patience and epochs_without_improvement >= early_stopping_patience:
+                print(f"\n⏹️ Early stopping triggered! No improvement for {early_stopping_patience} epochs.")
+                print(f"Best Val MAE: {best_val_mae:.4f}")
+                trainer.terminate()
+
         print(f"Best_val_mae: {best_val_mae:.4f}, Best_test_mae: {best_test_mae:.4f}")
+        if early_stopping_patience:
+            print(f"Epochs without improvement: {epochs_without_improvement}/{early_stopping_patience}")
         print("\n")
 
     # train the model!
