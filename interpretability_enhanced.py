@@ -28,6 +28,24 @@ from tqdm import tqdm
 class EnhancedInterpretabilityAnalyzer:
     """增强版可解释性分析器 - 支持完整的跨模态注意力分析"""
 
+    # 停用词列表 - 这些词通常对材料性质预测没有意义
+    STOPWORDS = {
+        # 常见英语停用词
+        'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+        'to', 'of', 'in', 'for', 'on', 'with', 'at', 'by', 'from', 'as',
+        'and', 'or', 'but', 'not', 'no', 'if', 'that', 'this', 'it', 'its',
+        'all', 'each', 'both', 'more', 'most', 'other', 'some', 'such',
+        'than', 'too', 'very', 'just', 'also', 'only', 'so', 'can', 'will',
+        # BERT 特殊token
+        '[CLS]', '[SEP]', '[PAD]', '[UNK]', '[MASK]',
+        # 常见标点和符号
+        '.', ',', '(', ')', '-', '–', ':', ';', '"', "'", '/', '\\',
+        # WordPiece 碎片词（通常以 ## 开头）
+        '##s', '##ed', '##ing', '##ly', '##er', '##est', '##tion', '##ment',
+        # 数字相关（通常不直接有意义）
+        'one', 'two', 'three', 'four', 'six', 'eight', 'twelve',
+    }
+
     def __init__(self, model, tokenizer=None, device='cuda'):
         """
         Args:
@@ -49,7 +67,34 @@ class EnhancedInterpretabilityAnalyzer:
         print(f"\n🔍 可解释性分析器初始化:")
         print(f"  - 跨模态注意力: {'✅ 支持' if self.has_cross_modal else '❌ 未启用'}")
         print(f"  - 中期融合: {'✅ 支持' if self.has_middle_fusion else '❌ 未启用'}")
-        print(f"  - 设备: {device}\n")
+        print(f"  - 设备: {device}")
+        print(f"  - 停用词过滤: ✅ 已启用 ({len(self.STOPWORDS)} 个停用词)\n")
+
+    def is_stopword(self, word):
+        """检查是否为停用词"""
+        word_lower = word.lower().strip()
+        # 检查是否在停用词列表中
+        if word_lower in self.STOPWORDS or word in self.STOPWORDS:
+            return True
+        # 检查是否为WordPiece碎片（以##开头且长度小于4）
+        if word.startswith('##') and len(word) < 5:
+            return True
+        # 检查是否为单个字符（除了元素符号）
+        if len(word_lower) == 1 and not word_lower.isupper():
+            return True
+        return False
+
+    def filter_stopwords_from_analysis(self, word_importance_pairs):
+        """过滤分析结果中的停用词
+
+        Args:
+            word_importance_pairs: [(word, importance), ...] 列表
+
+        Returns:
+            过滤后的列表
+        """
+        return [(word, imp) for word, imp in word_importance_pairs
+                if not self.is_stopword(word)]
 
     def extract_attention_weights(self, g, lg, text, return_prediction=True):
         """
@@ -673,7 +718,8 @@ class EnhancedInterpretabilityAnalyzer:
         save_path=None,
         top_k_atoms=10,
         top_k_words=15,
-        show_all_heads=False
+        show_all_heads=False,
+        filter_stopwords=True
     ):
         """
         可视化细粒度注意力权重（原子-文本token级别）
@@ -688,6 +734,7 @@ class EnhancedInterpretabilityAnalyzer:
             top_k_atoms: 显示top-k重要的原子
             top_k_words: 显示top-k重要的词语
             show_all_heads: 是否显示所有注意力头
+            filter_stopwords: 是否过滤停用词（默认True）
 
         Returns:
             分析结果字典
@@ -799,19 +846,32 @@ class EnhancedInterpretabilityAnalyzer:
         analysis = {}
 
         if atom_to_text_avg is not None:
-            # Top words attended by each atom
+            # Top words attended by each atom (with stopword filtering)
             analysis['atom_top_words'] = {}
             for i, element in enumerate(elements):
-                top_word_indices = atom_to_text_avg[i].argsort()[-top_k_words:][::-1]
-                top_words = [(text_tokens[idx], atom_to_text_avg[i, idx]) for idx in top_word_indices]
-                analysis['atom_top_words'][f"{element}_{i}"] = top_words
+                # 获取所有词的重要性
+                all_words = [(text_tokens[idx], float(atom_to_text_avg[i, idx]))
+                            for idx in range(len(text_tokens[:seq_len]))]
+                # 按重要性排序
+                all_words.sort(key=lambda x: x[1], reverse=True)
+                # 过滤停用词
+                if filter_stopwords:
+                    filtered_words = self.filter_stopwords_from_analysis(all_words)
+                else:
+                    filtered_words = all_words
+                analysis['atom_top_words'][f"{element}_{i}"] = filtered_words[:top_k_words]
 
             # Overall most important words (averaged over all atoms)
             word_importance = atom_to_text_avg.mean(axis=0)  # [seq_len]
-            top_word_indices = word_importance.argsort()[-top_k_words:][::-1]
-            analysis['overall_top_words'] = [
-                (text_tokens[idx], word_importance[idx]) for idx in top_word_indices
-            ]
+            all_words = [(text_tokens[idx], float(word_importance[idx]))
+                        for idx in range(len(text_tokens[:seq_len]))]
+            all_words.sort(key=lambda x: x[1], reverse=True)
+            # 过滤停用词
+            if filter_stopwords:
+                filtered_words = self.filter_stopwords_from_analysis(all_words)
+            else:
+                filtered_words = all_words
+            analysis['overall_top_words'] = filtered_words[:top_k_words]
 
         if text_to_atom_avg is not None:
             # Top atoms attended by each word
@@ -994,7 +1054,8 @@ class EnhancedInterpretabilityAnalyzer:
         atoms_object,
         text_tokens,
         top_k=20,
-        save_path=None
+        save_path=None,
+        filter_stopwords=True
     ):
         """
         识别最关键的原子-词语对及其语义类别
@@ -1005,6 +1066,7 @@ class EnhancedInterpretabilityAnalyzer:
             text_tokens: 文本tokens列表
             top_k: 返回top-k对
             save_path: 保存路径（可选）
+            filter_stopwords: 是否过滤停用词（默认True）
 
         Returns:
             分析结果字典，包含：
@@ -1029,16 +1091,25 @@ class EnhancedInterpretabilityAnalyzer:
         # Get atom elements
         elements = [str(atoms_object.elements[i]) for i in range(num_atoms)]
 
-        # Find top-k atom-word pairs
+        # Find top-k atom-word pairs (with optional stopword filtering)
         flat_attention = atom_to_text_avg.flatten()
-        top_indices = flat_attention.argsort()[-top_k:][::-1]
+        # 获取所有索引按注意力权重排序
+        sorted_indices = flat_attention.argsort()[::-1]
 
         top_pairs = []
-        for idx in top_indices:
+        for idx in sorted_indices:
+            if len(top_pairs) >= top_k:
+                break
+
             atom_idx = idx // seq_len
             word_idx = idx % seq_len
-            atom_name = f"{elements[atom_idx]}_{atom_idx}"
             word = text_tokens[word_idx]
+
+            # 过滤停用词
+            if filter_stopwords and self.is_stopword(word):
+                continue
+
+            atom_name = f"{elements[atom_idx]}_{atom_idx}"
             weight = float(atom_to_text_avg[atom_idx, word_idx])
             top_pairs.append({
                 'atom': atom_name,
