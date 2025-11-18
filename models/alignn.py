@@ -906,11 +906,34 @@ class ALIGNN(nn.Module):
         # Convert token IDs to tokens and check for stopwords
         for b in range(batch_size):
             tokens = tokenizer.convert_ids_to_tokens(input_ids[b].cpu().tolist())
-            for i, token in enumerate(tokens):
-                # Check if token is a stopword (case-insensitive)
-                token_lower = token.lower().replace('##', '')
-                if token_lower in self.stopwords or token in self.stopwords:
-                    stopword_mask[b, i] = 0
+
+            # Reconstruct complete words from WordPiece tokens
+            i = 0
+            while i < len(tokens):
+                # Find complete word (token not starting with ##, followed by ## tokens)
+                word_tokens = [tokens[i]]
+                word_indices = [i]
+                j = i + 1
+
+                # Collect all ## tokens that belong to this word
+                while j < len(tokens) and tokens[j].startswith('##'):
+                    word_tokens.append(tokens[j])
+                    word_indices.append(j)
+                    j += 1
+
+                # Reconstruct the complete word
+                complete_word = word_tokens[0]
+                for t in word_tokens[1:]:
+                    complete_word += t[2:]  # Remove ## prefix
+
+                # Check if complete word is a stopword (case-insensitive)
+                word_lower = complete_word.lower()
+                if word_lower in self.stopwords or complete_word in self.stopwords:
+                    # Mask all tokens of this word
+                    for idx in word_indices:
+                        stopword_mask[b, idx] = 0
+
+                i = j  # Move to next word
 
         # Combine with original attention mask
         combined_mask = attention_mask * stopword_mask
