@@ -221,15 +221,34 @@ def train_dgl(config: Union[TrainingConfig, Dict[str, Any]],model: nn.Module = N
         scheduler.load_state_dict(checkpoint["lr_scheduler"])
 
     # select configured loss function
-    criteria = {"mse": nn.MSELoss(),}
+    criteria = {
+        "mse": nn.MSELoss(),
+        "bce": nn.BCELoss(),
+    }
     criterion = criteria[config.criterion]
 
     # Check if contrastive learning is enabled
     use_contrastive = getattr(config.model, 'use_contrastive_loss', False)
     contrastive_weight = getattr(config.model, 'contrastive_loss_weight', 0.1)
 
-    # set up default metrics
-    metrics = {"loss": Loss(criterion), "mae": MeanAbsoluteError()}
+    # set up metrics based on task type
+    if classification:
+        # Classification metrics
+        def thresholded_output_transform(output):
+            y_pred, y = output
+            y_pred = (y_pred > 0.5).float()
+            return y_pred, y
+
+        metrics = {
+            "loss": Loss(criterion),
+            "accuracy": Accuracy(output_transform=thresholded_output_transform),
+            "precision": Precision(output_transform=thresholded_output_transform, average=True),
+            "recall": Recall(output_transform=thresholded_output_transform, average=True),
+        }
+        print(f"\n📊 分类模式已启用，使用准确率、精确率、召回率指标")
+    else:
+        # Regression metrics
+        metrics = {"loss": Loss(criterion), "mae": MeanAbsoluteError()}
 
     # Gradient clipping for stability
     grad_clip = 1.0

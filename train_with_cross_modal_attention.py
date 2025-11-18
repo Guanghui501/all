@@ -175,6 +175,12 @@ def get_parser():
     parser.add_argument('--early_stopping_patience', type=int, default=None,
                         help='Early stopping耐心值（无改善的epoch数）')
 
+    # 分类任务参数
+    parser.add_argument('--classification', type=int, default=0,
+                        help='是否为分类任务 (0/1)')
+    parser.add_argument('--classification_threshold', type=float, default=0.5,
+                        help='分类阈值（用于启用分类模式）')
+
     return parser
 
 
@@ -468,7 +474,7 @@ def create_config(args):
         "neighbor_strategy": "k-nearest",
         "id_tag": "jid",
         "random_seed": args.random_seed,
-        "classification_threshold": None,
+        "classification_threshold": args.classification_threshold if args.classification else None,
 
         # 数据划分
         "n_train": args.n_train,
@@ -487,7 +493,7 @@ def create_config(args):
         "learning_rate": args.learning_rate,
         "filename": f"{args.dataset}_{args.property}",
         "warmup_steps": args.warmup_steps,
-        "criterion": "mse",
+        "criterion": "bce" if args.classification else "mse",
         "optimizer": "adamw",
         "scheduler": "onecycle",
 
@@ -538,6 +544,10 @@ def main():
     print(f"  训练轮数: {args.epochs}")
     print(f"  学习率: {args.learning_rate}")
     print(f"  权重衰减: {args.weight_decay}")
+    print(f"  任务类型: {'分类' if args.classification else '回归'}")
+    if args.classification:
+        print(f"  分类阈值: {args.classification_threshold}")
+        print(f"  损失函数: BCE (Binary Cross Entropy)")
 
     print(f"\n模型配置:")
     print(f"  ALIGNN层数: {args.alignn_layers}")

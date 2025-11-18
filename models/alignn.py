@@ -1136,8 +1136,8 @@ class ALIGNN(nn.Module):
             out = self.link(out)
 
         if self.classification:
-            # out = torch.round(torch.sigmoid(out))
-            out = self.softmax(out)
+            # Binary classification: use sigmoid for 0/1 output
+            out = torch.sigmoid(out)
 
         predictions = torch.squeeze(out)
 

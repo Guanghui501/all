@@ -180,7 +180,7 @@ class TrainingConfig(BaseSettings):
     learning_rate: float = 1e-2
     filename: str = "sample"
     warmup_steps: int = 2000
-    criterion: Literal["mse", "l1", "poisson", "zig"] = "mse"
+    criterion: Literal["mse", "l1", "poisson", "zig", "bce"] = "mse"
     optimizer: Literal["adamw", "sgd"] = "adamw"
     scheduler: Literal["onecycle", "none"] = "onecycle"
     pin_memory: bool = False
