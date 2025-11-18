@@ -28,23 +28,79 @@ from tqdm import tqdm
 class EnhancedInterpretabilityAnalyzer:
     """增强版可解释性分析器 - 支持完整的跨模态注意力分析"""
 
-    # 停用词列表 - 这些词通常对材料性质预测没有意义
-    STOPWORDS = {
-        # 常见英语停用词
-        'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
-        'to', 'of', 'in', 'for', 'on', 'with', 'at', 'by', 'from', 'as',
-        'and', 'or', 'but', 'not', 'no', 'if', 'that', 'this', 'it', 'its',
-        'all', 'each', 'both', 'more', 'most', 'other', 'some', 'such',
-        'than', 'too', 'very', 'just', 'also', 'only', 'so', 'can', 'will',
-        # BERT 特殊token
-        '[CLS]', '[SEP]', '[PAD]', '[UNK]', '[MASK]',
-        # 常见标点和符号
-        '.', ',', '(', ')', '-', '–', ':', ';', '"', "'", '/', '\\',
-        # WordPiece 碎片词（通常以 ## 开头）
-        '##s', '##ed', '##ing', '##ly', '##er', '##est', '##tion', '##ment',
-        # 数字相关（通常不直接有意义）
-        'one', 'two', 'three', 'four', 'six', 'eight', 'twelve',
-    }
+    # 停用词将从文件加载
+    _STOPWORDS = None
+
+    @classmethod
+    def load_stopwords(cls, stopwords_dir=None):
+        """从文件加载停用词
+
+        Args:
+            stopwords_dir: 停用词目录路径，默认为 ./stopwords/en/
+
+        Returns:
+            停用词集合
+        """
+        if cls._STOPWORDS is not None:
+            return cls._STOPWORDS
+
+        stopwords = set()
+
+        # 默认停用词目录
+        if stopwords_dir is None:
+            # 尝试多个可能的路径
+            possible_dirs = [
+                Path(__file__).parent / 'stopwords' / 'en',
+                Path('./stopwords/en'),
+                Path('../stopwords/en'),
+            ]
+            for d in possible_dirs:
+                if d.exists():
+                    stopwords_dir = d
+                    break
+
+        if stopwords_dir is None or not Path(stopwords_dir).exists():
+            print(f"⚠️ 停用词目录不存在，使用默认停用词")
+            # 使用基本停用词
+            stopwords = {
+                'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+                'to', 'of', 'in', 'for', 'on', 'with', 'at', 'by', 'from', 'as',
+                'and', 'or', 'but', 'not', 'no', 'if', 'that', 'this', 'it', 'its',
+            }
+        else:
+            # 从所有txt文件加载停用词
+            stopwords_path = Path(stopwords_dir)
+            txt_files = list(stopwords_path.glob('*.txt'))
+
+            for txt_file in txt_files:
+                try:
+                    with open(txt_file, 'r', encoding='utf-8') as f:
+                        for line in f:
+                            word = line.strip().lower()
+                            if word and not word.startswith('#'):  # 跳过空行和注释
+                                stopwords.add(word)
+                except Exception as e:
+                    pass  # 静默处理读取错误
+
+            print(f"✅ 从 {len(txt_files)} 个文件加载了 {len(stopwords)} 个停用词")
+
+        # 添加 BERT 特殊 token 和标点符号
+        special_tokens = {
+            '[CLS]', '[SEP]', '[PAD]', '[UNK]', '[MASK]',
+            '.', ',', '(', ')', '-', '–', ':', ';', '"', "'", '/', '\\',
+            '##s', '##ed', '##ing', '##ly', '##er', '##est', '##tion', '##ment',
+        }
+        stopwords.update(special_tokens)
+
+        cls._STOPWORDS = stopwords
+        return stopwords
+
+    @property
+    def STOPWORDS(self):
+        """获取停用词集合（懒加载）"""
+        if self._STOPWORDS is None:
+            self.load_stopwords()
+        return self._STOPWORDS
 
     def __init__(self, model, tokenizer=None, device='cuda'):
         """
@@ -63,6 +119,9 @@ class EnhancedInterpretabilityAnalyzer:
                               model.use_cross_modal_attention
         self.has_middle_fusion = hasattr(model, 'use_middle_fusion') and \
                                 model.use_middle_fusion
+
+        # 加载停用词
+        self.load_stopwords()
 
         print(f"\n🔍 可解释性分析器初始化:")
         print(f"  - 跨模态注意力: {'✅ 支持' if self.has_cross_modal else '❌ 未启用'}")
