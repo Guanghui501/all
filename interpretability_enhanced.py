@@ -1391,6 +1391,12 @@ class EnhancedInterpretabilityAnalyzer:
 
         # Average over heads
         atom_to_text_avg = atom_to_text.mean(axis=0)  # [num_atoms, seq_len]
+
+        # Merge WordPiece tokens for better display
+        merged_tokens, merged_weights, token_mapping = self._merge_tokens_and_weights(text_tokens, atom_to_text_avg)
+        text_tokens = merged_tokens
+        atom_to_text_avg = merged_weights
+
         num_atoms, seq_len = atom_to_text_avg.shape
 
         # Get atom elements
