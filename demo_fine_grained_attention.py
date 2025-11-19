@@ -82,13 +82,26 @@ def load_model_with_fine_grained_attention(checkpoint_path, device='cuda'):
         try:
             config = ALIGNNConfig(**config_dict)
         except Exception as e:
-            # If still failing, try with minimal config
-            print(f"   Warning: Some config fields not supported, using minimal config")
-            minimal_dict = {k: v for k, v in config_dict.items()
-                          if k in ['name', 'alignn_layers', 'gcn_layers', 'atom_input_features',
-                                  'hidden_features', 'output_features', 'use_cross_modal_attention',
-                                  'use_fine_grained_attention', 'use_middle_fusion']}
-            config = ALIGNNConfig(**minimal_dict)
+            # If still failing, try removing optional fields one by one
+            print(f"   Warning: {e}")
+            print(f"   Trying to remove unsupported fields...")
+
+            # Fields that might not exist in all versions
+            fields_to_try_remove = ['graph_dropout', 'mask_stopwords', 'remove_stopwords',
+                                   'stopwords_dir', 'use_contrastive_loss',
+                                   'contrastive_loss_weight', 'contrastive_temperature']
+
+            for field in fields_to_try_remove:
+                if field in config_dict:
+                    del config_dict[field]
+
+            try:
+                config = ALIGNNConfig(**config_dict)
+            except Exception as e2:
+                # Last resort: use saved_config directly
+                print(f"   Still failing: {e2}")
+                print(f"   Using saved config directly")
+                config = saved_config
 
         print(f"   - use_cross_modal_attention: {config.use_cross_modal_attention}")
         print(f"   - use_middle_fusion: {config.use_middle_fusion}")
