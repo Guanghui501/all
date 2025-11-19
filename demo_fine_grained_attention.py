@@ -37,31 +37,50 @@ def load_model_with_fine_grained_attention(checkpoint_path, device='cuda'):
     # Load checkpoint (set weights_only=False for backward compatibility)
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
 
-    # Create config with fine-grained attention enabled
-    config = ALIGNNConfig(
-        name="alignn",
-        alignn_layers=4,
-        gcn_layers=4,
-        atom_input_features=92,
-        hidden_features=256,
-        output_features=1,
+    # Try to load config from checkpoint first
+    if 'config' in checkpoint:
+        config = checkpoint['config']
+        print("✅ Loaded config from checkpoint")
+        print(f"   - use_cross_modal_attention: {getattr(config, 'use_cross_modal_attention', False)}")
+        print(f"   - use_middle_fusion: {getattr(config, 'use_middle_fusion', False)}")
+        print(f"   - use_fine_grained_attention: {getattr(config, 'use_fine_grained_attention', False)}")
+    else:
+        # Fall back to default config - try to infer from checkpoint
+        print("⚠️  Config not found in checkpoint, using defaults")
 
-        # Enable cross-modal features
-        use_cross_modal_attention=True,
-        cross_modal_hidden_dim=256,
-        cross_modal_num_heads=4,
+        # Check fc1 shape to determine use_cross_modal_attention
+        model_state = checkpoint.get('model', checkpoint)
+        if 'fc1.weight' in model_state:
+            fc1_shape = model_state['fc1.weight'].shape
+            use_cross_modal = (fc1_shape[1] == 64)  # [64, 64] means cross-modal
+            print(f"   - Inferred use_cross_modal_attention={use_cross_modal} from fc1.weight shape {fc1_shape}")
+        else:
+            use_cross_modal = True
 
-        # Enable middle fusion
-        use_middle_fusion=True,
-        middle_fusion_layers="2",
+        config = ALIGNNConfig(
+            name="alignn",
+            alignn_layers=4,
+            gcn_layers=4,
+            atom_input_features=92,
+            hidden_features=256,
+            output_features=1,
 
-        # ⭐ Enable fine-grained attention (NEW!)
-        use_fine_grained_attention=True,
-        fine_grained_hidden_dim=256,
-        fine_grained_num_heads=8,
-        fine_grained_dropout=0.1,
-        fine_grained_use_projection=True
-    )
+            # Cross-modal features (inferred from checkpoint)
+            use_cross_modal_attention=use_cross_modal,
+            cross_modal_hidden_dim=256,
+            cross_modal_num_heads=4,
+
+            # Middle fusion
+            use_middle_fusion=True,
+            middle_fusion_layers="2",
+
+            # Fine-grained attention
+            use_fine_grained_attention=False,  # Default to False since old models don't have it
+            fine_grained_hidden_dim=256,
+            fine_grained_num_heads=8,
+            fine_grained_dropout=0.1,
+            fine_grained_use_projection=True
+        )
 
     # Create model
     model = ALIGNN(config)
@@ -75,9 +94,10 @@ def load_model_with_fine_grained_attention(checkpoint_path, device='cuda'):
     model = model.to(device)
     model.eval()
 
-    print("✅ Model loaded with fine-grained attention enabled")
-    print(f"   - Fine-grained attention heads: {config.fine_grained_num_heads}")
-    print(f"   - Hidden dimension: {config.fine_grained_hidden_dim}")
+    print("✅ Model loaded successfully")
+    if hasattr(config, 'use_fine_grained_attention') and config.use_fine_grained_attention:
+        print(f"   - Fine-grained attention heads: {config.fine_grained_num_heads}")
+        print(f"   - Hidden dimension: {config.fine_grained_hidden_dim}")
 
     return model, config
 
