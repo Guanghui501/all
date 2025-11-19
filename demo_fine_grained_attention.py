@@ -100,19 +100,36 @@ def load_model_with_fine_grained_attention(checkpoint_path, device='cuda'):
             fine_grained_use_projection=True
         )
 
-    # Create model
-    model = ALIGNN(config)
+    # Create model with automatic retry on size mismatch
+    model_state = checkpoint.get('model', checkpoint)
 
-    # Load weights
-    if 'model' in checkpoint:
-        model.load_state_dict(checkpoint['model'], strict=False)
-    else:
-        model.load_state_dict(checkpoint, strict=False)
+    def try_load_model(cfg):
+        """Try to create and load model with given config."""
+        m = ALIGNN(cfg)
+        if 'model' in checkpoint:
+            m.load_state_dict(checkpoint['model'], strict=False)
+        else:
+            m.load_state_dict(checkpoint, strict=False)
+        return m
+
+    try:
+        print(f"\n   Creating model with use_cross_modal_attention={config.use_cross_modal_attention}")
+        model = try_load_model(config)
+    except RuntimeError as e:
+        if "size mismatch for fc1.weight" in str(e):
+            # Try with opposite setting
+            print(f"\n⚠️  Size mismatch detected, trying with opposite cross_modal setting...")
+            config.use_cross_modal_attention = not config.use_cross_modal_attention
+            print(f"   Retrying with use_cross_modal_attention={config.use_cross_modal_attention}")
+            model = try_load_model(config)
+        else:
+            raise e
 
     model = model.to(device)
     model.eval()
 
     print("✅ Model loaded successfully")
+    print(f"   - Final config: use_cross_modal_attention={config.use_cross_modal_attention}")
     if hasattr(config, 'use_fine_grained_attention') and config.use_fine_grained_attention:
         print(f"   - Fine-grained attention heads: {config.fine_grained_num_heads}")
         print(f"   - Hidden dimension: {config.fine_grained_hidden_dim}")
