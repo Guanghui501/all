@@ -100,30 +100,85 @@ def load_model_with_fine_grained_attention(checkpoint_path, device='cuda'):
             fine_grained_use_projection=True
         )
 
-    # Create model with automatic retry on size mismatch
-    model_state = checkpoint.get('model', checkpoint)
+    # Create model with flexible loading that skips mismatched layers
+    checkpoint_state = checkpoint.get('model', checkpoint)
 
-    def try_load_model(cfg):
-        """Try to create and load model with given config."""
+    def load_model_flexible(cfg, state_dict):
+        """Load model with flexible weight loading that skips mismatched layers."""
         m = ALIGNN(cfg)
-        if 'model' in checkpoint:
-            m.load_state_dict(checkpoint['model'], strict=False)
-        else:
-            m.load_state_dict(checkpoint, strict=False)
+        model_dict = m.state_dict()
+
+        # Filter out mismatched keys
+        pretrained_dict = {}
+        skipped_keys = []
+        for k, v in state_dict.items():
+            if k in model_dict:
+                if v.shape == model_dict[k].shape:
+                    pretrained_dict[k] = v
+                else:
+                    skipped_keys.append(f"{k}: checkpoint {v.shape} vs model {model_dict[k].shape}")
+            else:
+                skipped_keys.append(f"{k}: not in model")
+
+        if skipped_keys:
+            print(f"\n⚠️  Skipped {len(skipped_keys)} mismatched layers:")
+            for key in skipped_keys[:5]:  # Show first 5
+                print(f"      - {key}")
+            if len(skipped_keys) > 5:
+                print(f"      ... and {len(skipped_keys) - 5} more")
+
+        # Load the filtered state dict
+        model_dict.update(pretrained_dict)
+        m.load_state_dict(model_dict)
+
+        print(f"\n   Loaded {len(pretrained_dict)}/{len(state_dict)} weights from checkpoint")
         return m
 
-    try:
-        print(f"\n   Creating model with use_cross_modal_attention={config.use_cross_modal_attention}")
-        model = try_load_model(config)
-    except RuntimeError as e:
-        if "size mismatch for fc1.weight" in str(e):
-            # Try with opposite setting
-            print(f"\n⚠️  Size mismatch detected, trying with opposite cross_modal setting...")
-            config.use_cross_modal_attention = not config.use_cross_modal_attention
-            print(f"   Retrying with use_cross_modal_attention={config.use_cross_modal_attention}")
-            model = try_load_model(config)
-        else:
-            raise e
+    # Try different config combinations to find best match
+    best_model = None
+    best_loaded = 0
+    best_config = None
+
+    configs_to_try = [
+        # Original inferred config
+        {'cross_modal': config.use_cross_modal_attention, 'fine_grained': config.use_fine_grained_attention},
+        # Flip cross_modal
+        {'cross_modal': not config.use_cross_modal_attention, 'fine_grained': config.use_fine_grained_attention},
+        # Flip fine_grained
+        {'cross_modal': config.use_cross_modal_attention, 'fine_grained': not config.use_fine_grained_attention},
+        # Flip both
+        {'cross_modal': not config.use_cross_modal_attention, 'fine_grained': not config.use_fine_grained_attention},
+    ]
+
+    for i, cfg_try in enumerate(configs_to_try):
+        config.use_cross_modal_attention = cfg_try['cross_modal']
+        config.use_fine_grained_attention = cfg_try['fine_grained']
+
+        print(f"\n   Trying config {i+1}/4: cross_modal={cfg_try['cross_modal']}, fine_grained={cfg_try['fine_grained']}")
+
+        m = ALIGNN(config)
+        model_dict = m.state_dict()
+
+        # Count matching weights
+        matched = sum(1 for k, v in checkpoint_state.items()
+                     if k in model_dict and v.shape == model_dict[k].shape)
+
+        if matched > best_loaded:
+            best_loaded = matched
+            best_model = m
+            best_config = cfg_try.copy()
+
+        # Perfect match found
+        if matched == len(checkpoint_state):
+            break
+
+    # Use best config
+    config.use_cross_modal_attention = best_config['cross_modal']
+    config.use_fine_grained_attention = best_config['fine_grained']
+    print(f"\n   Best config: cross_modal={best_config['cross_modal']}, fine_grained={best_config['fine_grained']}")
+    print(f"   Matched {best_loaded}/{len(checkpoint_state)} weights")
+
+    model = load_model_flexible(config, checkpoint_state)
 
     model = model.to(device)
     model.eval()
