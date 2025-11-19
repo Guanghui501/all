@@ -894,10 +894,13 @@ class EnhancedInterpretabilityAnalyzer:
                     current_token += token
                     current_indices.append(i)
                 elif token.isdigit() and current_token and not current_token[-1].isdigit():
-                    # Only merge numbers with atom symbols or space group starters
+                    # Only merge numbers with atom symbols or short space group starters
                     # NOT with regular words like "bonded"
                     # Check both original case and capitalized for atom symbols
-                    if current_token in atom_symbols or current_token.capitalize() in atom_symbols or current_token[0].upper() in space_group_starters:
+                    # For space group starters, only merge if token is short (<=2 chars, like P, I, F, Pm)
+                    is_atom = current_token in atom_symbols or current_token.capitalize() in atom_symbols
+                    is_short_space_group = (len(current_token) <= 2 and current_token[0].upper() in space_group_starters)
+                    if is_atom or is_short_space_group:
                         current_token += token
                         current_indices.append(i)
                     else:
