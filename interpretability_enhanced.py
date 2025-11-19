@@ -778,7 +778,8 @@ class EnhancedInterpretabilityAnalyzer:
         top_k_atoms=10,
         top_k_words=15,
         show_all_heads=False,
-        filter_stopwords=True
+        filter_stopwords=True,
+        merge_wordpiece=True
     ):
         """
         可视化细粒度注意力权重（原子-文本token级别）
@@ -794,6 +795,7 @@ class EnhancedInterpretabilityAnalyzer:
             top_k_words: 显示top-k重要的词语
             show_all_heads: 是否显示所有注意力头
             filter_stopwords: 是否过滤停用词（默认True）
+            merge_wordpiece: 是否合并WordPiece tokens用于显示（如F-43m）
 
         Returns:
             分析结果字典
@@ -801,6 +803,69 @@ class EnhancedInterpretabilityAnalyzer:
         import matplotlib.pyplot as plt
         import seaborn as sns
         import numpy as np
+
+        def merge_tokens_and_weights(tokens, weights):
+            """Merge WordPiece tokens and their corresponding attention weights.
+
+            Args:
+                tokens: list of token strings
+                weights: numpy array of shape [..., seq_len]
+
+            Returns:
+                merged_tokens: list of merged token strings
+                merged_weights: numpy array with merged weights
+                token_mapping: list mapping merged index to original indices
+            """
+            merged_tokens = []
+            token_mapping = []  # Each element is a list of original indices
+            current_token = ""
+            current_indices = []
+
+            for i, token in enumerate(tokens):
+                if token.startswith("##"):
+                    # Continue previous token
+                    current_token += token[2:]
+                    current_indices.append(i)
+                elif token in ['-', '_', '.', '(', ')', '[', ']'] and current_token:
+                    # Merge punctuation with previous token
+                    current_token += token
+                    current_indices.append(i)
+                else:
+                    # Save previous token if exists
+                    if current_token:
+                        merged_tokens.append(current_token)
+                        token_mapping.append(current_indices)
+                    # Start new token
+                    current_token = token
+                    current_indices = [i]
+
+            # Don't forget the last token
+            if current_token:
+                merged_tokens.append(current_token)
+                token_mapping.append(current_indices)
+
+            # Merge weights by averaging over grouped indices
+            if weights is not None and len(weights.shape) >= 1:
+                # Handle different weight shapes
+                if len(weights.shape) == 1:
+                    # [seq_len]
+                    merged_weights = np.array([weights[indices].mean() for indices in token_mapping])
+                elif len(weights.shape) == 2:
+                    # [num_atoms, seq_len] or [seq_len, num_atoms]
+                    if weights.shape[-1] == len(tokens):
+                        # Last dim is seq_len
+                        merged_weights = np.array([[weights[i, indices].mean() for indices in token_mapping]
+                                                   for i in range(weights.shape[0])])
+                    else:
+                        # First dim is seq_len
+                        merged_weights = np.array([[weights[indices, i].mean() for indices in token_mapping]
+                                                   for i in range(weights.shape[1])]).T
+                else:
+                    merged_weights = weights  # Don't merge for complex shapes
+            else:
+                merged_weights = weights
+
+            return merged_tokens, merged_weights, token_mapping
 
         if attention_weights is None:
             print("⚠️  没有细粒度注意力权重")
@@ -835,6 +900,19 @@ class EnhancedInterpretabilityAnalyzer:
         # Average over heads
         atom_to_text_avg = atom_to_text.mean(axis=0) if atom_to_text is not None else None  # [num_atoms, seq_len]
         text_to_atom_avg = text_to_atom.mean(axis=0) if text_to_atom is not None else None  # [seq_len, num_atoms]
+
+        # Merge WordPiece tokens if requested
+        original_tokens = text_tokens.copy() if isinstance(text_tokens, list) else list(text_tokens)
+        if merge_wordpiece and atom_to_text_avg is not None:
+            text_tokens, atom_to_text_avg, token_mapping = merge_tokens_and_weights(original_tokens, atom_to_text_avg)
+            if text_to_atom_avg is not None:
+                # text_to_atom_avg is [seq_len, num_atoms], merge along first dim
+                merged_t2a = []
+                for indices in token_mapping:
+                    merged_t2a.append(text_to_atom_avg[indices, :].mean(axis=0))
+                text_to_atom_avg = np.array(merged_t2a)
+            seq_len = len(text_tokens)
+            print(f"   - Merged tokens: {seq_len} (from {len(original_tokens)} original)")
 
         # Create visualization
         if show_all_heads:

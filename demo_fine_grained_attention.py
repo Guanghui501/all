@@ -177,6 +177,36 @@ def analyze_with_fine_grained_attention(
     elif len(tokens) < seq_len:
         tokens = tokens + ['[PAD]'] * (seq_len - len(tokens))
 
+    # Merge WordPiece tokens for better display
+    # E.g., ["F", "-", "43", "m"] -> ["F-43m"]
+    def merge_wordpiece_tokens(token_list):
+        """Merge WordPiece tokens (##) and combine related tokens."""
+        merged = []
+        current = ""
+        for token in token_list:
+            if token.startswith("##"):
+                # Continue previous token
+                current += token[2:]
+            elif token in ['[CLS]', '[SEP]', '[PAD]']:
+                if current:
+                    merged.append(current)
+                    current = ""
+                merged.append(token)
+            elif token in ['-', '_', '.', ',', '(', ')', '[', ']']:
+                # Merge punctuation with adjacent tokens
+                current += token
+            else:
+                if current:
+                    merged.append(current)
+                current = token
+        if current:
+            merged.append(current)
+        return merged
+
+    # Create display tokens (merged for readability)
+    display_tokens = merge_wordpiece_tokens(tokens)
+    print(f"   - Original tokens: {len(tokens)}, Merged tokens: {len(display_tokens)}")
+
     # Create analyzer for visualization
     analyzer = EnhancedInterpretabilityAnalyzer(model, device=device)
 
