@@ -129,6 +129,179 @@ class EnhancedInterpretabilityAnalyzer:
         print(f"  - 设备: {device}")
         print(f"  - 停用词过滤: ✅ 已启用 ({len(self.STOPWORDS)} 个停用词)\n")
 
+    @staticmethod
+    def _merge_tokens_and_weights(tokens, weights):
+        """Merge WordPiece tokens and their corresponding attention weights.
+
+        Handles space groups (F-43m, P63/mmc), N-coordinate (12-coordinate),
+        atom labels with site numbers (Ba(1)), and element symbols with digits (Ba4).
+
+        Args:
+            tokens: list of token strings
+            weights: numpy array of shape [..., seq_len]
+
+        Returns:
+            merged_tokens: list of merged token strings
+            merged_weights: numpy array with merged weights
+            token_mapping: list mapping merged index to original indices
+        """
+        import numpy as np
+
+        # Space group starting letters (Bravais lattice symbols)
+        space_group_starters = {'P', 'I', 'F', 'R', 'C', 'A', 'B'}
+        # Characters that are part of space group notation
+        space_group_chars = {'-', '/', 'm', 'n', 'c', 'a', 'b', 'd', 'e'}
+        # Common atom symbols (1-2 letters)
+        atom_symbols = {'H', 'He', 'Li', 'Be', 'B', 'C', 'N', 'O', 'F', 'Ne',
+                       'Na', 'Mg', 'Al', 'Si', 'P', 'S', 'Cl', 'Ar', 'K', 'Ca',
+                       'Sc', 'Ti', 'V', 'Cr', 'Mn', 'Fe', 'Co', 'Ni', 'Cu', 'Zn',
+                       'Ga', 'Ge', 'As', 'Se', 'Br', 'Kr', 'Rb', 'Sr', 'Y', 'Zr',
+                       'Nb', 'Mo', 'Tc', 'Ru', 'Rh', 'Pd', 'Ag', 'Cd', 'In', 'Sn',
+                       'Sb', 'Te', 'I', 'Xe', 'Cs', 'Ba', 'La', 'Ce', 'Pr', 'Nd',
+                       'Pm', 'Sm', 'Eu', 'Gd', 'Tb', 'Dy', 'Ho', 'Er', 'Tm', 'Yb',
+                       'Lu', 'Hf', 'Ta', 'W', 'Re', 'Os', 'Ir', 'Pt', 'Au', 'Hg',
+                       'Tl', 'Pb', 'Bi', 'Po', 'At', 'Rn', 'Fr', 'Ra', 'Ac', 'Th',
+                       'Pa', 'U', 'Np', 'Pu', 'Am', 'Cm', 'Bk', 'Cf', 'Es', 'Fm'}
+
+        merged_tokens = []
+        token_mapping = []  # Each element is a list of original indices
+        current_token = ""
+        current_indices = []
+        in_space_group = False  # Track if we're in a space group symbol
+        in_coordinate = False  # Track if we're in a N-coordinate pattern
+        in_parentheses = False  # Track if we're inside parentheses like Ba(1)
+
+        for i, token in enumerate(tokens):
+            if token.startswith("##"):
+                # Continue previous token (WordPiece continuation)
+                current_token += token[2:]
+                current_indices.append(i)
+            elif token == '-' and current_token:
+                # Check if this is part of space group or N-coordinate pattern
+                # Use upper() for case-insensitive space group detection (BERT lowercases)
+                if current_token[0].upper() in space_group_starters and len(current_token) <= 4:
+                    # Space group pattern (F-43m, P-1, f-43m)
+                    current_token += token
+                    current_indices.append(i)
+                    in_space_group = True
+                elif current_token.isdigit():
+                    # N-coordinate pattern (12-coordinate)
+                    current_token += token
+                    current_indices.append(i)
+                    in_coordinate = True
+                else:
+                    # Don't merge "-" with regular words like "bonded"
+                    if current_token:
+                        merged_tokens.append(current_token)
+                        token_mapping.append(current_indices)
+                        in_space_group = False
+                        in_coordinate = False
+                    current_token = token
+                    current_indices = [i]
+            elif token == '/' and current_token:
+                # Merge "/" for space groups (I4/mmm, P63/mmc)
+                # Use upper() for case-insensitive detection
+                if current_token[0].upper() in space_group_starters:
+                    current_token += token
+                    current_indices.append(i)
+                    in_space_group = True
+                else:
+                    if current_token:
+                        merged_tokens.append(current_token)
+                        token_mapping.append(current_indices)
+                    current_token = token
+                    current_indices = [i]
+            elif in_coordinate and token.isalpha():
+                # Continue N-coordinate pattern (12-coordinate)
+                current_token += token
+                current_indices.append(i)
+                in_coordinate = False  # End after the word
+            elif in_space_group and (token.isdigit() or (token.lower() in space_group_chars) or
+                                     (token.isalpha() and len(token) <= 2)):
+                # Continue space group: merge numbers, m/n/c/a/b/d letters
+                current_token += token
+                current_indices.append(i)
+            elif token == '(' and current_token:
+                # Merge opening parentheses (e.g., for atom labels like Li(1))
+                current_token += token
+                current_indices.append(i)
+                in_parentheses = True
+            elif token == ')' and current_token and in_parentheses:
+                # Merge closing parentheses
+                current_token += token
+                current_indices.append(i)
+                in_parentheses = False
+            elif in_parentheses and (token.isdigit() or token.isalpha()):
+                # Merge content inside parentheses (digits or letters)
+                current_token += token
+                current_indices.append(i)
+            elif token.isdigit() and current_token and not current_token[-1].isdigit():
+                # Only merge numbers with atom symbols or short space group starters
+                # NOT with regular words like "bonded"
+                # Check both original case and capitalized for atom symbols
+                # For space group starters, only merge if token is short (<=2 chars, like P, I, F, Pm)
+                is_atom = current_token in atom_symbols or current_token.capitalize() in atom_symbols
+                is_short_space_group = (len(current_token) <= 2 and current_token[0].upper() in space_group_starters)
+                if is_atom or is_short_space_group:
+                    current_token += token
+                    current_indices.append(i)
+                else:
+                    # Save previous and start new with the digit
+                    if current_token:
+                        merged_tokens.append(current_token)
+                        token_mapping.append(current_indices)
+                        in_space_group = False
+                    current_token = token
+                    current_indices = [i]
+            elif token == '.' and current_token:
+                # Merge decimal points
+                current_token += token
+                current_indices.append(i)
+            else:
+                # Save previous token if exists
+                if current_token:
+                    merged_tokens.append(current_token)
+                    token_mapping.append(current_indices)
+                    in_space_group = False
+                    in_coordinate = False
+                    in_parentheses = False
+                # Start new token
+                current_token = token
+                current_indices = [i]
+                # Check if starting a space group (case-insensitive)
+                if token.upper() in space_group_starters:
+                    in_space_group = True
+                else:
+                    in_space_group = False
+
+        # Don't forget the last token
+        if current_token:
+            merged_tokens.append(current_token)
+            token_mapping.append(current_indices)
+
+        # Merge weights by averaging over grouped indices
+        if weights is not None and len(weights.shape) >= 1:
+            # Handle different weight shapes
+            if len(weights.shape) == 1:
+                # [seq_len]
+                merged_weights = np.array([weights[indices].mean() for indices in token_mapping])
+            elif len(weights.shape) == 2:
+                # [num_atoms, seq_len] or [seq_len, num_atoms]
+                if weights.shape[-1] == len(tokens):
+                    # Last dim is seq_len
+                    merged_weights = np.array([[weights[i, indices].mean() for indices in token_mapping]
+                                               for i in range(weights.shape[0])])
+                else:
+                    # First dim is seq_len
+                    merged_weights = np.array([[weights[indices, i].mean() for indices in token_mapping]
+                                               for i in range(weights.shape[1])]).T
+            else:
+                merged_weights = weights  # Don't merge for complex shapes
+        else:
+            merged_weights = weights
+
+        return merged_tokens, merged_weights, token_mapping
+
     def is_stopword(self, word):
         """检查是否为停用词"""
         word_lower = word.lower().strip()
@@ -804,173 +977,6 @@ class EnhancedInterpretabilityAnalyzer:
         import seaborn as sns
         import numpy as np
 
-        def merge_tokens_and_weights(tokens, weights):
-            """Merge WordPiece tokens and their corresponding attention weights.
-
-            Args:
-                tokens: list of token strings
-                weights: numpy array of shape [..., seq_len]
-
-            Returns:
-                merged_tokens: list of merged token strings
-                merged_weights: numpy array with merged weights
-                token_mapping: list mapping merged index to original indices
-            """
-            # Space group starting letters (Bravais lattice symbols)
-            space_group_starters = {'P', 'I', 'F', 'R', 'C', 'A', 'B'}
-            # Characters that are part of space group notation
-            space_group_chars = {'-', '/', 'm', 'n', 'c', 'a', 'b', 'd', 'e'}
-            # Common atom symbols (1-2 letters)
-            atom_symbols = {'H', 'He', 'Li', 'Be', 'B', 'C', 'N', 'O', 'F', 'Ne',
-                           'Na', 'Mg', 'Al', 'Si', 'P', 'S', 'Cl', 'Ar', 'K', 'Ca',
-                           'Sc', 'Ti', 'V', 'Cr', 'Mn', 'Fe', 'Co', 'Ni', 'Cu', 'Zn',
-                           'Ga', 'Ge', 'As', 'Se', 'Br', 'Kr', 'Rb', 'Sr', 'Y', 'Zr',
-                           'Nb', 'Mo', 'Tc', 'Ru', 'Rh', 'Pd', 'Ag', 'Cd', 'In', 'Sn',
-                           'Sb', 'Te', 'I', 'Xe', 'Cs', 'Ba', 'La', 'Ce', 'Pr', 'Nd',
-                           'Pm', 'Sm', 'Eu', 'Gd', 'Tb', 'Dy', 'Ho', 'Er', 'Tm', 'Yb',
-                           'Lu', 'Hf', 'Ta', 'W', 'Re', 'Os', 'Ir', 'Pt', 'Au', 'Hg',
-                           'Tl', 'Pb', 'Bi', 'Po', 'At', 'Rn', 'Fr', 'Ra', 'Ac', 'Th',
-                           'Pa', 'U', 'Np', 'Pu', 'Am', 'Cm', 'Bk', 'Cf', 'Es', 'Fm'}
-
-            merged_tokens = []
-            token_mapping = []  # Each element is a list of original indices
-            current_token = ""
-            current_indices = []
-            in_space_group = False  # Track if we're in a space group symbol
-            in_coordinate = False  # Track if we're in a N-coordinate pattern
-            in_parentheses = False  # Track if we're inside parentheses like Ba(1)
-
-            for i, token in enumerate(tokens):
-                if token.startswith("##"):
-                    # Continue previous token (WordPiece continuation)
-                    current_token += token[2:]
-                    current_indices.append(i)
-                elif token == '-' and current_token:
-                    # Check if this is part of space group or N-coordinate pattern
-                    # Use upper() for case-insensitive space group detection (BERT lowercases)
-                    if current_token[0].upper() in space_group_starters and len(current_token) <= 4:
-                        # Space group pattern (F-43m, P-1, f-43m)
-                        current_token += token
-                        current_indices.append(i)
-                        in_space_group = True
-                    elif current_token.isdigit():
-                        # N-coordinate pattern (12-coordinate)
-                        current_token += token
-                        current_indices.append(i)
-                        in_coordinate = True
-                    else:
-                        # Don't merge "-" with regular words like "bonded"
-                        if current_token:
-                            merged_tokens.append(current_token)
-                            token_mapping.append(current_indices)
-                            in_space_group = False
-                            in_coordinate = False
-                        current_token = token
-                        current_indices = [i]
-                elif token == '/' and current_token:
-                    # Merge "/" for space groups (I4/mmm, P63/mmc)
-                    # Use upper() for case-insensitive detection
-                    if current_token[0].upper() in space_group_starters:
-                        current_token += token
-                        current_indices.append(i)
-                        in_space_group = True
-                    else:
-                        if current_token:
-                            merged_tokens.append(current_token)
-                            token_mapping.append(current_indices)
-                        current_token = token
-                        current_indices = [i]
-                elif in_coordinate and token.isalpha():
-                    # Continue N-coordinate pattern (12-coordinate)
-                    current_token += token
-                    current_indices.append(i)
-                    in_coordinate = False  # End after the word
-                elif in_space_group and (token.isdigit() or (token.lower() in space_group_chars) or
-                                         (token.isalpha() and len(token) <= 2)):
-                    # Continue space group: merge numbers, m/n/c/a/b/d letters
-                    current_token += token
-                    current_indices.append(i)
-                elif token == '(' and current_token:
-                    # Merge opening parentheses (e.g., for atom labels like Li(1))
-                    current_token += token
-                    current_indices.append(i)
-                    in_parentheses = True
-                elif token == ')' and current_token and in_parentheses:
-                    # Merge closing parentheses
-                    current_token += token
-                    current_indices.append(i)
-                    in_parentheses = False
-                elif in_parentheses and (token.isdigit() or token.isalpha()):
-                    # Merge content inside parentheses (digits or letters)
-                    current_token += token
-                    current_indices.append(i)
-                elif token.isdigit() and current_token and not current_token[-1].isdigit():
-                    # Only merge numbers with atom symbols or short space group starters
-                    # NOT with regular words like "bonded"
-                    # Check both original case and capitalized for atom symbols
-                    # For space group starters, only merge if token is short (<=2 chars, like P, I, F, Pm)
-                    is_atom = current_token in atom_symbols or current_token.capitalize() in atom_symbols
-                    is_short_space_group = (len(current_token) <= 2 and current_token[0].upper() in space_group_starters)
-                    if is_atom or is_short_space_group:
-                        current_token += token
-                        current_indices.append(i)
-                    else:
-                        # Save previous and start new with the digit
-                        if current_token:
-                            merged_tokens.append(current_token)
-                            token_mapping.append(current_indices)
-                            in_space_group = False
-                        current_token = token
-                        current_indices = [i]
-                elif token == '.' and current_token:
-                    # Merge decimal points
-                    current_token += token
-                    current_indices.append(i)
-                else:
-                    # Save previous token if exists
-                    if current_token:
-                        merged_tokens.append(current_token)
-                        token_mapping.append(current_indices)
-                        in_space_group = False
-                        in_coordinate = False
-                        in_parentheses = False
-                    # Start new token
-                    current_token = token
-                    current_indices = [i]
-                    # Check if starting a space group (case-insensitive)
-                    if token.upper() in space_group_starters:
-                        in_space_group = True
-                    else:
-                        in_space_group = False
-
-            # Don't forget the last token
-            if current_token:
-                merged_tokens.append(current_token)
-                token_mapping.append(current_indices)
-
-            # Merge weights by averaging over grouped indices
-            if weights is not None and len(weights.shape) >= 1:
-                # Handle different weight shapes
-                if len(weights.shape) == 1:
-                    # [seq_len]
-                    merged_weights = np.array([weights[indices].mean() for indices in token_mapping])
-                elif len(weights.shape) == 2:
-                    # [num_atoms, seq_len] or [seq_len, num_atoms]
-                    if weights.shape[-1] == len(tokens):
-                        # Last dim is seq_len
-                        merged_weights = np.array([[weights[i, indices].mean() for indices in token_mapping]
-                                                   for i in range(weights.shape[0])])
-                    else:
-                        # First dim is seq_len
-                        merged_weights = np.array([[weights[indices, i].mean() for indices in token_mapping]
-                                                   for i in range(weights.shape[1])]).T
-                else:
-                    merged_weights = weights  # Don't merge for complex shapes
-            else:
-                merged_weights = weights
-
-            return merged_tokens, merged_weights, token_mapping
-
         if attention_weights is None:
             print("⚠️  没有细粒度注意力权重")
             return None
@@ -1008,7 +1014,7 @@ class EnhancedInterpretabilityAnalyzer:
         # Merge WordPiece tokens if requested
         original_tokens = text_tokens.copy() if isinstance(text_tokens, list) else list(text_tokens)
         if merge_wordpiece and atom_to_text_avg is not None:
-            text_tokens, atom_to_text_avg, token_mapping = merge_tokens_and_weights(original_tokens, atom_to_text_avg)
+            text_tokens, atom_to_text_avg, token_mapping = self._merge_tokens_and_weights(original_tokens, atom_to_text_avg)
             if text_to_atom_avg is not None:
                 # text_to_atom_avg is [seq_len, num_atoms], merge along first dim
                 merged_t2a = []
@@ -1214,6 +1220,21 @@ class EnhancedInterpretabilityAnalyzer:
         # Get atom elements
         elements = [str(atoms_object.elements[i]) for i in range(num_atoms)]
 
+        # Merge WordPiece tokens for better display
+        # Use average over all heads for merging
+        avg_attn = atom_to_text.mean(axis=0)  # [num_atoms, seq_len]
+        merged_tokens, merged_weights, token_mapping = self._merge_tokens_and_weights(text_tokens, avg_attn)
+
+        # Merge attention for each head
+        merged_head_attn = []
+        for head in range(num_heads):
+            head_attn = atom_to_text[head]  # [num_atoms, seq_len]
+            # Merge weights for this head
+            merged_head = np.array([[head_attn[atom, indices].mean() for indices in token_mapping]
+                                    for atom in range(num_atoms)])
+            merged_head_attn.append(merged_head)
+        merged_head_attn = np.array(merged_head_attn)  # [num_heads, num_atoms, merged_seq_len]
+
         analysis = {
             'head_patterns': {},
             'head_diversity': 0.0,
@@ -1225,7 +1246,7 @@ class EnhancedInterpretabilityAnalyzer:
         head_vectors = []  # For diversity calculation
 
         for head in range(num_heads):
-            head_attn = atom_to_text[head]  # [num_atoms, seq_len]
+            head_attn = merged_head_attn[head]  # [num_atoms, merged_seq_len]
 
             # Calculate entropy (lower = more focused)
             head_entropy_val = entropy(head_attn.flatten() + 1e-10)
@@ -1234,7 +1255,7 @@ class EnhancedInterpretabilityAnalyzer:
             # Find top words for this head
             word_importance = head_attn.mean(axis=0)  # Average over atoms
             top_word_indices = word_importance.argsort()[-5:][::-1]
-            top_words = [(text_tokens[idx], float(word_importance[idx])) for idx in top_word_indices]
+            top_words = [(merged_tokens[idx], float(word_importance[idx])) for idx in top_word_indices]
 
             # Find top atoms for this head
             atom_importance = head_attn.mean(axis=1)  # Average over words
