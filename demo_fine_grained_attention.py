@@ -44,32 +44,51 @@ def load_model_with_fine_grained_attention(checkpoint_path, device='cuda'):
 
         # Recreate config to ensure compatibility
         # (checkpoint may have been saved with different module path)
-        config = ALIGNNConfig(
-            name=getattr(saved_config, 'name', 'alignn'),
-            alignn_layers=getattr(saved_config, 'alignn_layers', 4),
-            gcn_layers=getattr(saved_config, 'gcn_layers', 4),
-            atom_input_features=getattr(saved_config, 'atom_input_features', 92),
-            edge_input_features=getattr(saved_config, 'edge_input_features', 80),
-            triplet_input_features=getattr(saved_config, 'triplet_input_features', 40),
-            embedding_features=getattr(saved_config, 'embedding_features', 64),
-            hidden_features=getattr(saved_config, 'hidden_features', 256),
-            output_features=getattr(saved_config, 'output_features', 1),
-            graph_dropout=getattr(saved_config, 'graph_dropout', 0.0),
-            use_cross_modal_attention=getattr(saved_config, 'use_cross_modal_attention', True),
-            cross_modal_hidden_dim=getattr(saved_config, 'cross_modal_hidden_dim', 256),
-            cross_modal_num_heads=getattr(saved_config, 'cross_modal_num_heads', 4),
-            cross_modal_dropout=getattr(saved_config, 'cross_modal_dropout', 0.1),
-            use_fine_grained_attention=getattr(saved_config, 'use_fine_grained_attention', False),
-            fine_grained_hidden_dim=getattr(saved_config, 'fine_grained_hidden_dim', 256),
-            fine_grained_num_heads=getattr(saved_config, 'fine_grained_num_heads', 8),
-            fine_grained_dropout=getattr(saved_config, 'fine_grained_dropout', 0.1),
-            fine_grained_use_projection=getattr(saved_config, 'fine_grained_use_projection', True),
-            use_middle_fusion=getattr(saved_config, 'use_middle_fusion', False),
-            middle_fusion_layers=getattr(saved_config, 'middle_fusion_layers', '2'),
-            middle_fusion_hidden_dim=getattr(saved_config, 'middle_fusion_hidden_dim', 128),
-            middle_fusion_num_heads=getattr(saved_config, 'middle_fusion_num_heads', 2),
-            middle_fusion_dropout=getattr(saved_config, 'middle_fusion_dropout', 0.1),
-        )
+        # Build config dict with only fields that exist in ALIGNNConfig
+        config_dict = {
+            'name': getattr(saved_config, 'name', 'alignn'),
+            'alignn_layers': getattr(saved_config, 'alignn_layers', 4),
+            'gcn_layers': getattr(saved_config, 'gcn_layers', 4),
+            'atom_input_features': getattr(saved_config, 'atom_input_features', 92),
+            'edge_input_features': getattr(saved_config, 'edge_input_features', 80),
+            'triplet_input_features': getattr(saved_config, 'triplet_input_features', 40),
+            'embedding_features': getattr(saved_config, 'embedding_features', 64),
+            'hidden_features': getattr(saved_config, 'hidden_features', 256),
+            'output_features': getattr(saved_config, 'output_features', 1),
+            'use_cross_modal_attention': getattr(saved_config, 'use_cross_modal_attention', True),
+            'cross_modal_hidden_dim': getattr(saved_config, 'cross_modal_hidden_dim', 256),
+            'cross_modal_num_heads': getattr(saved_config, 'cross_modal_num_heads', 4),
+            'cross_modal_dropout': getattr(saved_config, 'cross_modal_dropout', 0.1),
+            'use_fine_grained_attention': getattr(saved_config, 'use_fine_grained_attention', False),
+            'fine_grained_hidden_dim': getattr(saved_config, 'fine_grained_hidden_dim', 256),
+            'fine_grained_num_heads': getattr(saved_config, 'fine_grained_num_heads', 8),
+            'fine_grained_dropout': getattr(saved_config, 'fine_grained_dropout', 0.1),
+            'fine_grained_use_projection': getattr(saved_config, 'fine_grained_use_projection', True),
+            'use_middle_fusion': getattr(saved_config, 'use_middle_fusion', False),
+            'middle_fusion_layers': getattr(saved_config, 'middle_fusion_layers', '2'),
+            'middle_fusion_hidden_dim': getattr(saved_config, 'middle_fusion_hidden_dim', 128),
+            'middle_fusion_num_heads': getattr(saved_config, 'middle_fusion_num_heads', 2),
+            'middle_fusion_dropout': getattr(saved_config, 'middle_fusion_dropout', 0.1),
+        }
+
+        # Try to add optional fields if they exist in the target ALIGNNConfig
+        optional_fields = ['graph_dropout', 'mask_stopwords', 'remove_stopwords', 'stopwords_dir',
+                          'use_contrastive_loss', 'contrastive_loss_weight', 'contrastive_temperature']
+        for field in optional_fields:
+            if hasattr(saved_config, field):
+                config_dict[field] = getattr(saved_config, field)
+
+        # Create config, filtering out any fields not accepted
+        try:
+            config = ALIGNNConfig(**config_dict)
+        except Exception as e:
+            # If still failing, try with minimal config
+            print(f"   Warning: Some config fields not supported, using minimal config")
+            minimal_dict = {k: v for k, v in config_dict.items()
+                          if k in ['name', 'alignn_layers', 'gcn_layers', 'atom_input_features',
+                                  'hidden_features', 'output_features', 'use_cross_modal_attention',
+                                  'use_fine_grained_attention', 'use_middle_fusion']}
+            config = ALIGNNConfig(**minimal_dict)
 
         print(f"   - use_cross_modal_attention: {config.use_cross_modal_attention}")
         print(f"   - use_middle_fusion: {config.use_middle_fusion}")
