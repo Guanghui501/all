@@ -637,6 +637,9 @@ def main():
     config_dict = create_config(args)
     config_dict['output_dir'] = output_dir
 
+    # 提取模型配置（ALIGNNConfig）用于保存到checkpoint
+    model_config = config_dict['model']
+
     # 保存配置（将 ALIGNNConfig 对象转换为字典以便 JSON 序列化）
     config_file = os.path.join(output_dir, 'config.json')
     config_dict_serializable = config_dict.copy()
