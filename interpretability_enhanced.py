@@ -1431,37 +1431,101 @@ class EnhancedInterpretabilityAnalyzer:
                 'word_idx': int(word_idx)
             })
 
-        # Semantic categorization (simple rule-based)
-        element_keywords = set(['mg', 'sn', 'ge', 'o', 'na', 'ba', 'bi', 'si', 'al', 'fe', 'cu', 'zn'])
+        # Semantic categorization (rule-based with detailed categories)
+        # Element identification
+        element_keywords = set(['mg', 'sn', 'ge', 'o', 'na', 'ba', 'bi', 'si', 'al', 'fe', 'cu', 'zn',
+                               'li', 'hf', 'k', 'ca', 'ti', 'v', 'cr', 'mn', 'co', 'ni', 'ga', 'as',
+                               'se', 'br', 'rb', 'sr', 'y', 'zr', 'nb', 'mo', 'ag', 'cd', 'in', 'sb',
+                               'te', 'cs', 'la', 'ce', 'pr', 'nd', 'sm', 'eu', 'gd', 'tb', 'dy', 'ho',
+                               'er', 'tm', 'yb', 'lu', 'ta', 'w', 're', 'os', 'ir', 'pt', 'au', 'hg',
+                               'tl', 'pb', 'po', 'at', 'rn', 'fr', 'ra', 'ac', 'th', 'pa', 'u', 'np', 'pu'])
+
+        # Crystal structure and symmetry
         structure_keywords = set(['cubic', 'monoclinic', 'orthorhombic', 'hexagonal', 'tetragonal',
-                                  'triclinic', 'group', 'space', 'symmetry'])
-        bonding_keywords = set(['bond', 'bonded', 'length', 'distance', 'å', 'coordination', 'coordinate'])
-        geometry_keywords = set(['geometry', 'octahedral', 'tetrahedral', 'planar', 'sharing',
-                               'corner', 'edge', 'face'])
+                                  'triclinic', 'rhombohedral', 'trigonal', 'symmetry', 'lattice', 'cell',
+                                  'crystallizes', 'crystal', 'phase'])
+
+        # Space group related
+        space_group_keywords = set(['group', 'space', 'p-1', 'pm-3m', 'fm-3m', 'fd-3m', 'i4/mmm',
+                                   'p63/mmc', 'r-3m', 'c2/m', 'cmcm', 'pnma', 'pbca'])
+
+        # Bonding and coordination
+        bonding_keywords = set(['bond', 'bonded', 'bonding', 'length', 'distance', 'å', 'coordination',
+                               'coordinate', 'valence', 'oxidation'])
+
+        # Geometry and polyhedra
+        geometry_keywords = set(['geometry', 'octahedral', 'tetrahedral', 'planar', 'trigonal',
+                                'square', 'pyramidal', 'bipyramidal', 'prismatic', 'antiprismatic',
+                                'linear', 'bent', 'seesaw', 't-shaped'])
+
+        # Polyhedral connectivity
+        connectivity_keywords = set(['sharing', 'corner', 'edge', 'face', 'vertex', 'connected',
+                                    'linked', 'bridging', 'terminal'])
+
+        # Distortion and disorder
+        distortion_keywords = set(['distorted', 'distortion', 'tilted', 'rotated', 'displaced',
+                                  'disordered', 'ordered', 'regular', 'irregular'])
+
+        # Framework and structural units
+        framework_keywords = set(['framework', 'cluster', 'chain', 'layer', 'sheet', 'network',
+                                 'cage', 'channel', 'pore', 'void', 'consists', 'composed'])
+
+        # Equivalence and multiplicity
+        equivalence_keywords = set(['equivalent', 'inequivalent', 'unique', 'distinct', 'identical',
+                                   'similar', 'different'])
+
+        # Composition and formula
+        composition_keywords = set(['formula', 'composition', 'stoichiometry', 'ratio', 'content',
+                                   'concentration', 'doping', 'substitution'])
 
         semantic_categories = {
             'element_identification': [],
-            'structure_information': [],
-            'bonding_information': [],
-            'geometry_information': [],
+            'structure_symmetry': [],
+            'space_group': [],
+            'bonding_coordination': [],
+            'geometry_polyhedra': [],
+            'connectivity': [],
+            'distortion': [],
+            'framework_units': [],
+            'equivalence': [],
+            'composition': [],
             'other': []
         }
 
         for pair in top_pairs:
-            word_lower = pair['word'].lower().replace('#', '')
+            word_lower = pair['word'].lower().replace('#', '').replace('-', '')
             categorized = False
 
-            if word_lower in element_keywords or any(word_lower.startswith(elem) for elem in element_keywords):
+            # Check each category
+            if word_lower in element_keywords or any(word_lower.startswith(elem) for elem in element_keywords if len(elem) <= 2):
                 semantic_categories['element_identification'].append(pair)
                 categorized = True
-            elif word_lower in structure_keywords:
-                semantic_categories['structure_information'].append(pair)
+            elif word_lower in space_group_keywords or any(sg in pair['word'].lower() for sg in ['43m', '63', 'mmm', '3m']):
+                semantic_categories['space_group'].append(pair)
+                categorized = True
+            elif word_lower in structure_keywords or 'crystal' in word_lower:
+                semantic_categories['structure_symmetry'].append(pair)
                 categorized = True
             elif word_lower in bonding_keywords or 'bond' in word_lower or 'coordinate' in word_lower:
-                semantic_categories['bonding_information'].append(pair)
+                semantic_categories['bonding_coordination'].append(pair)
                 categorized = True
-            elif word_lower in geometry_keywords:
-                semantic_categories['geometry_information'].append(pair)
+            elif word_lower in distortion_keywords or 'distort' in word_lower:
+                semantic_categories['distortion'].append(pair)
+                categorized = True
+            elif word_lower in geometry_keywords or 'hedral' in word_lower:
+                semantic_categories['geometry_polyhedra'].append(pair)
+                categorized = True
+            elif word_lower in connectivity_keywords:
+                semantic_categories['connectivity'].append(pair)
+                categorized = True
+            elif word_lower in framework_keywords:
+                semantic_categories['framework_units'].append(pair)
+                categorized = True
+            elif word_lower in equivalence_keywords:
+                semantic_categories['equivalence'].append(pair)
+                categorized = True
+            elif word_lower in composition_keywords:
+                semantic_categories['composition'].append(pair)
                 categorized = True
 
             if not categorized:
