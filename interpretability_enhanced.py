@@ -279,58 +279,6 @@ class EnhancedInterpretabilityAnalyzer:
             merged_tokens.append(current_token)
             token_mapping.append(current_indices)
 
-        # Post-process: Split concatenated chemical formulas like "liba4hf" into "li", "ba4", "hf"
-        import re
-        # Pattern to match element symbols (1-2 lowercase letters) optionally followed by numbers
-        element_pattern = re.compile(r'([a-z]{1,2})(\d*)')
-
-        # Element symbols in lowercase for matching
-        atom_symbols_lower = {s.lower() for s in atom_symbols}
-
-        final_tokens = []
-        final_mapping = []
-
-        for tok_idx, (token, indices) in enumerate(zip(merged_tokens, token_mapping)):
-            # Check if this looks like a concatenated formula (multiple elements)
-            if len(token) > 4 and token.isalnum() and not token.isdigit():
-                # Try to split into elements
-                parts = []
-                remaining = token.lower()
-                pos = 0
-
-                while remaining:
-                    match = element_pattern.match(remaining)
-                    if match:
-                        elem = match.group(1)
-                        num = match.group(2)
-                        if elem in atom_symbols_lower:
-                            parts.append(elem + num)
-                            remaining = remaining[len(match.group(0)):]
-                        else:
-                            # Not a valid element, keep original
-                            parts = [token]
-                            break
-                    else:
-                        # Can't match, keep original
-                        parts = [token]
-                        break
-
-                # Only split if we found multiple valid elements
-                if len(parts) > 1:
-                    # Split the token and distribute indices evenly
-                    for part in parts:
-                        final_tokens.append(part)
-                        final_mapping.append(indices)  # Use same indices for all parts
-                else:
-                    final_tokens.append(token)
-                    final_mapping.append(indices)
-            else:
-                final_tokens.append(token)
-                final_mapping.append(indices)
-
-        merged_tokens = final_tokens
-        token_mapping = final_mapping
-
         # Merge weights by averaging over grouped indices
         if weights is not None and len(weights.shape) >= 1:
             # Handle different weight shapes
