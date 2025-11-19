@@ -45,8 +45,25 @@ def load_model_with_fine_grained_attention(checkpoint_path, device='cuda'):
         print(f"   - use_middle_fusion: {getattr(config, 'use_middle_fusion', False)}")
         print(f"   - use_fine_grained_attention: {getattr(config, 'use_fine_grained_attention', False)}")
     else:
-        # Fall back to default config for old checkpoints
-        print("⚠️  Config not found in checkpoint, using default config...")
+        # Fall back: infer config from checkpoint state_dict
+        print("⚠️  Config not found in checkpoint, inferring from state_dict...")
+        checkpoint_state = checkpoint.get('model', checkpoint)
+        state_keys = list(checkpoint_state.keys())
+
+        # Infer use_cross_modal_attention from fc1.weight shape
+        use_cross_modal = False
+        if 'fc1.weight' in checkpoint_state:
+            fc1_shape = checkpoint_state['fc1.weight'].shape
+            use_cross_modal = (fc1_shape[1] == 64)  # [64, 64] means cross-modal
+            print(f"   - fc1.weight shape: {fc1_shape} -> use_cross_modal_attention={use_cross_modal}")
+
+        # Infer other settings from state_dict keys
+        use_middle_fusion = any('middle_fusion' in k for k in state_keys)
+        use_fine_grained = any('fine_grained_attention' in k for k in state_keys)
+
+        print(f"   - use_middle_fusion: {use_middle_fusion}")
+        print(f"   - use_fine_grained_attention: {use_fine_grained}")
+
         config = ALIGNNConfig(
             name="alignn",
             alignn_layers=4,
@@ -54,9 +71,11 @@ def load_model_with_fine_grained_attention(checkpoint_path, device='cuda'):
             atom_input_features=92,
             hidden_features=256,
             output_features=1,
-            use_cross_modal_attention=True,
+            use_cross_modal_attention=use_cross_modal,
             cross_modal_hidden_dim=256,
             cross_modal_num_heads=4,
+            use_middle_fusion=use_middle_fusion,
+            use_fine_grained_attention=use_fine_grained,
         )
 
     # Create model
