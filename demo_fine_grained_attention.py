@@ -39,11 +39,41 @@ def load_model_with_fine_grained_attention(checkpoint_path, device='cuda'):
 
     # Load config from checkpoint
     if 'config' in checkpoint:
-        config = checkpoint['config']
+        saved_config = checkpoint['config']
         print("✅ Loaded config from checkpoint")
-        print(f"   - use_cross_modal_attention: {getattr(config, 'use_cross_modal_attention', False)}")
-        print(f"   - use_middle_fusion: {getattr(config, 'use_middle_fusion', False)}")
-        print(f"   - use_fine_grained_attention: {getattr(config, 'use_fine_grained_attention', False)}")
+
+        # Recreate config to ensure compatibility
+        # (checkpoint may have been saved with different module path)
+        config = ALIGNNConfig(
+            name=getattr(saved_config, 'name', 'alignn'),
+            alignn_layers=getattr(saved_config, 'alignn_layers', 4),
+            gcn_layers=getattr(saved_config, 'gcn_layers', 4),
+            atom_input_features=getattr(saved_config, 'atom_input_features', 92),
+            edge_input_features=getattr(saved_config, 'edge_input_features', 80),
+            triplet_input_features=getattr(saved_config, 'triplet_input_features', 40),
+            embedding_features=getattr(saved_config, 'embedding_features', 64),
+            hidden_features=getattr(saved_config, 'hidden_features', 256),
+            output_features=getattr(saved_config, 'output_features', 1),
+            graph_dropout=getattr(saved_config, 'graph_dropout', 0.0),
+            use_cross_modal_attention=getattr(saved_config, 'use_cross_modal_attention', True),
+            cross_modal_hidden_dim=getattr(saved_config, 'cross_modal_hidden_dim', 256),
+            cross_modal_num_heads=getattr(saved_config, 'cross_modal_num_heads', 4),
+            cross_modal_dropout=getattr(saved_config, 'cross_modal_dropout', 0.1),
+            use_fine_grained_attention=getattr(saved_config, 'use_fine_grained_attention', False),
+            fine_grained_hidden_dim=getattr(saved_config, 'fine_grained_hidden_dim', 256),
+            fine_grained_num_heads=getattr(saved_config, 'fine_grained_num_heads', 8),
+            fine_grained_dropout=getattr(saved_config, 'fine_grained_dropout', 0.1),
+            fine_grained_use_projection=getattr(saved_config, 'fine_grained_use_projection', True),
+            use_middle_fusion=getattr(saved_config, 'use_middle_fusion', False),
+            middle_fusion_layers=getattr(saved_config, 'middle_fusion_layers', '2'),
+            middle_fusion_hidden_dim=getattr(saved_config, 'middle_fusion_hidden_dim', 128),
+            middle_fusion_num_heads=getattr(saved_config, 'middle_fusion_num_heads', 2),
+            middle_fusion_dropout=getattr(saved_config, 'middle_fusion_dropout', 0.1),
+        )
+
+        print(f"   - use_cross_modal_attention: {config.use_cross_modal_attention}")
+        print(f"   - use_middle_fusion: {config.use_middle_fusion}")
+        print(f"   - use_fine_grained_attention: {config.use_fine_grained_attention}")
     else:
         # Fall back: infer config from checkpoint state_dict
         print("⚠️  Config not found in checkpoint, inferring from state_dict...")
