@@ -820,26 +820,68 @@ class EnhancedInterpretabilityAnalyzer:
             space_group_starters = {'P', 'I', 'F', 'R', 'C', 'A', 'B'}
             # Characters that are part of space group notation
             space_group_chars = {'-', '/', 'm', 'n', 'c', 'a', 'b', 'd', 'e'}
+            # Common atom symbols (1-2 letters)
+            atom_symbols = {'H', 'He', 'Li', 'Be', 'B', 'C', 'N', 'O', 'F', 'Ne',
+                           'Na', 'Mg', 'Al', 'Si', 'P', 'S', 'Cl', 'Ar', 'K', 'Ca',
+                           'Sc', 'Ti', 'V', 'Cr', 'Mn', 'Fe', 'Co', 'Ni', 'Cu', 'Zn',
+                           'Ga', 'Ge', 'As', 'Se', 'Br', 'Kr', 'Rb', 'Sr', 'Y', 'Zr',
+                           'Nb', 'Mo', 'Tc', 'Ru', 'Rh', 'Pd', 'Ag', 'Cd', 'In', 'Sn',
+                           'Sb', 'Te', 'I', 'Xe', 'Cs', 'Ba', 'La', 'Ce', 'Pr', 'Nd',
+                           'Pm', 'Sm', 'Eu', 'Gd', 'Tb', 'Dy', 'Ho', 'Er', 'Tm', 'Yb',
+                           'Lu', 'Hf', 'Ta', 'W', 'Re', 'Os', 'Ir', 'Pt', 'Au', 'Hg',
+                           'Tl', 'Pb', 'Bi', 'Po', 'At', 'Rn', 'Fr', 'Ra', 'Ac', 'Th',
+                           'Pa', 'U', 'Np', 'Pu', 'Am', 'Cm', 'Bk', 'Cf', 'Es', 'Fm'}
 
             merged_tokens = []
             token_mapping = []  # Each element is a list of original indices
             current_token = ""
             current_indices = []
             in_space_group = False  # Track if we're in a space group symbol
+            in_coordinate = False  # Track if we're in a N-coordinate pattern
 
             for i, token in enumerate(tokens):
                 if token.startswith("##"):
                     # Continue previous token (WordPiece continuation)
                     current_token += token[2:]
                     current_indices.append(i)
-                elif token in ['-', '/', '_'] and current_token:
-                    # Merge these punctuation with previous token
-                    # Common in space groups (F-43m, I4/mmm, P63/mmc)
+                elif token == '-' and current_token:
+                    # Check if this is part of space group or N-coordinate pattern
+                    if current_token[0] in space_group_starters and len(current_token) <= 4:
+                        # Space group pattern (F-43m, P-1)
+                        current_token += token
+                        current_indices.append(i)
+                        in_space_group = True
+                    elif current_token.isdigit():
+                        # N-coordinate pattern (12-coordinate)
+                        current_token += token
+                        current_indices.append(i)
+                        in_coordinate = True
+                    else:
+                        # Don't merge "-" with regular words like "bonded"
+                        if current_token:
+                            merged_tokens.append(current_token)
+                            token_mapping.append(current_indices)
+                            in_space_group = False
+                            in_coordinate = False
+                        current_token = token
+                        current_indices = [i]
+                elif token == '/' and current_token:
+                    # Merge "/" for space groups (I4/mmm, P63/mmc)
+                    if current_token[0] in space_group_starters:
+                        current_token += token
+                        current_indices.append(i)
+                        in_space_group = True
+                    else:
+                        if current_token:
+                            merged_tokens.append(current_token)
+                            token_mapping.append(current_indices)
+                        current_token = token
+                        current_indices = [i]
+                elif in_coordinate and token.isalpha():
+                    # Continue N-coordinate pattern (12-coordinate)
                     current_token += token
                     current_indices.append(i)
-                    # Check if this looks like a space group
-                    if len(current_token) >= 1 and current_token[0] in space_group_starters:
-                        in_space_group = True
+                    in_coordinate = False  # End after the word
                 elif in_space_group and (token.isdigit() or (token.lower() in space_group_chars) or
                                          (token.isalpha() and len(token) <= 2)):
                     # Continue space group: merge numbers, m/n/c/a/b/d letters
@@ -850,9 +892,19 @@ class EnhancedInterpretabilityAnalyzer:
                     current_token += token
                     current_indices.append(i)
                 elif token.isdigit() and current_token and not current_token[-1].isdigit():
-                    # Merge numbers after non-digits (e.g., Ba4, Li1, P63)
-                    current_token += token
-                    current_indices.append(i)
+                    # Only merge numbers with atom symbols or space group starters
+                    # NOT with regular words like "bonded"
+                    if current_token in atom_symbols or current_token[0] in space_group_starters:
+                        current_token += token
+                        current_indices.append(i)
+                    else:
+                        # Save previous and start new with the digit
+                        if current_token:
+                            merged_tokens.append(current_token)
+                            token_mapping.append(current_indices)
+                            in_space_group = False
+                        current_token = token
+                        current_indices = [i]
                 elif token == '.' and current_token:
                     # Merge decimal points
                     current_token += token
@@ -863,6 +915,7 @@ class EnhancedInterpretabilityAnalyzer:
                         merged_tokens.append(current_token)
                         token_mapping.append(current_indices)
                         in_space_group = False
+                        in_coordinate = False
                     # Start new token
                     current_token = token
                     current_indices = [i]
