@@ -707,7 +707,8 @@ def main():
     train_dgl(
         config=config,
         train_val_test_loaders=[train_loader, val_loader, test_loader, prepare_batch],
-        resume=args.resume
+        resume=args.resume,
+        model_config=model_config  # Pass model config for checkpoint saving
     )
 
     end_time = time.time()

@@ -126,11 +126,18 @@ def setup_optimizer(params, config: TrainingConfig):
     return optimizer
 
 
-def train_dgl(config: Union[TrainingConfig, Dict[str, Any]],model: nn.Module = None,train_val_test_loaders=[],resume=0):
+def train_dgl(config: Union[TrainingConfig, Dict[str, Any]], model: nn.Module = None, train_val_test_loaders=[], resume=0, model_config=None):
     """Training entry point for DGL networks.
 
     `config` should conform to alignn.conf.TrainingConfig, and
     if passed as a dict with matching keys, pydantic validation is used
+
+    Args:
+        config: Training configuration
+        model: Model to train
+        train_val_test_loaders: Data loaders
+        resume: Resume from checkpoint
+        model_config: Model configuration (ALIGNNConfig) to save in checkpoint
     """
     # print(config)
     # if type(config) is dict:
@@ -426,6 +433,7 @@ def train_dgl(config: Union[TrainingConfig, Dict[str, Any]],model: nn.Module = N
             best_val_mae = vmetrics['mae']
             best_val_checkpoint = {
                 "model": net.state_dict(),
+                "config": model_config,  # Save model config (ALIGNNConfig)
                 "optimizer": optimizer.state_dict(),
                 "lr_scheduler": scheduler.state_dict(),
                 "epoch": engine.state.epoch,
@@ -441,6 +449,7 @@ def train_dgl(config: Union[TrainingConfig, Dict[str, Any]],model: nn.Module = N
             best_test_mae = tstmetrics['mae']
             best_test_checkpoint = {
                 "model": net.state_dict(),
+                "config": model_config,  # Save model config (ALIGNNConfig)
                 "optimizer": optimizer.state_dict(),
                 "lr_scheduler": scheduler.state_dict(),
                 "epoch": engine.state.epoch,
