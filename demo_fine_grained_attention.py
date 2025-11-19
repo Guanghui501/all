@@ -37,7 +37,7 @@ def load_model_with_fine_grained_attention(checkpoint_path, device='cuda'):
     # Load checkpoint (set weights_only=False for backward compatibility)
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
 
-    # Try to load config from checkpoint first
+    # Load config from checkpoint
     if 'config' in checkpoint:
         config = checkpoint['config']
         print("✅ Loaded config from checkpoint")
@@ -45,36 +45,8 @@ def load_model_with_fine_grained_attention(checkpoint_path, device='cuda'):
         print(f"   - use_middle_fusion: {getattr(config, 'use_middle_fusion', False)}")
         print(f"   - use_fine_grained_attention: {getattr(config, 'use_fine_grained_attention', False)}")
     else:
-        # Fall back to default config - try to infer from checkpoint
-        print("⚠️  Config not found in checkpoint, inferring from state_dict...")
-
-        model_state = checkpoint.get('model', checkpoint)
-
-        # Infer configurations from state_dict keys
-        state_keys = list(model_state.keys())
-
-        # Primary method: Use fc1.weight shape to determine use_cross_modal_attention
-        # This is the most reliable indicator
-        use_cross_modal = False
-        if 'fc1.weight' in model_state:
-            fc1_shape = model_state['fc1.weight'].shape
-            # fc1.weight shape [64, 64] means cross-modal (input=64), [64, 128] means concat (input=128)
-            use_cross_modal = (fc1_shape[1] == 64)
-            print(f"   - fc1.weight shape: {fc1_shape}")
-        else:
-            # Fallback: check for cross_modal_attention keys
-            use_cross_modal = any('cross_modal_attention' in k for k in state_keys)
-
-        # Check for middle_fusion
-        use_middle_fusion = any('middle_fusion' in k for k in state_keys)
-
-        # Check for fine_grained_attention
-        use_fine_grained = any('fine_grained_attention' in k for k in state_keys)
-
-        print(f"   - Inferred use_cross_modal_attention: {use_cross_modal}")
-        print(f"   - Inferred use_middle_fusion: {use_middle_fusion}")
-        print(f"   - Inferred use_fine_grained_attention: {use_fine_grained}")
-
+        # Fall back to default config for old checkpoints
+        print("⚠️  Config not found in checkpoint, using default config...")
         config = ALIGNNConfig(
             name="alignn",
             alignn_layers=4,
@@ -82,112 +54,22 @@ def load_model_with_fine_grained_attention(checkpoint_path, device='cuda'):
             atom_input_features=92,
             hidden_features=256,
             output_features=1,
-
-            # Cross-modal features (inferred from checkpoint)
-            use_cross_modal_attention=use_cross_modal,
+            use_cross_modal_attention=True,
             cross_modal_hidden_dim=256,
             cross_modal_num_heads=4,
-
-            # Middle fusion (inferred from checkpoint)
-            use_middle_fusion=use_middle_fusion,
-            middle_fusion_layers="2",
-
-            # Fine-grained attention (inferred from checkpoint)
-            use_fine_grained_attention=use_fine_grained,
-            fine_grained_hidden_dim=256,
-            fine_grained_num_heads=8,
-            fine_grained_dropout=0.1,
-            fine_grained_use_projection=True
         )
 
-    # Create model with flexible loading that skips mismatched layers
+    # Create model
+    model = ALIGNN(config)
+
+    # Load weights
     checkpoint_state = checkpoint.get('model', checkpoint)
-
-    def load_model_flexible(cfg, state_dict):
-        """Load model with flexible weight loading that skips mismatched layers."""
-        m = ALIGNN(cfg)
-        model_dict = m.state_dict()
-
-        # Filter out mismatched keys
-        pretrained_dict = {}
-        skipped_keys = []
-        for k, v in state_dict.items():
-            if k in model_dict:
-                if v.shape == model_dict[k].shape:
-                    pretrained_dict[k] = v
-                else:
-                    skipped_keys.append(f"{k}: checkpoint {v.shape} vs model {model_dict[k].shape}")
-            else:
-                skipped_keys.append(f"{k}: not in model")
-
-        if skipped_keys:
-            print(f"\n⚠️  Skipped {len(skipped_keys)} mismatched layers:")
-            for key in skipped_keys[:5]:  # Show first 5
-                print(f"      - {key}")
-            if len(skipped_keys) > 5:
-                print(f"      ... and {len(skipped_keys) - 5} more")
-
-        # Load the filtered state dict
-        model_dict.update(pretrained_dict)
-        m.load_state_dict(model_dict)
-
-        print(f"\n   Loaded {len(pretrained_dict)}/{len(state_dict)} weights from checkpoint")
-        return m
-
-    # Try different config combinations to find best match
-    best_model = None
-    best_loaded = 0
-    best_config = None
-
-    configs_to_try = [
-        # Original inferred config
-        {'cross_modal': config.use_cross_modal_attention, 'fine_grained': config.use_fine_grained_attention},
-        # Flip cross_modal
-        {'cross_modal': not config.use_cross_modal_attention, 'fine_grained': config.use_fine_grained_attention},
-        # Flip fine_grained
-        {'cross_modal': config.use_cross_modal_attention, 'fine_grained': not config.use_fine_grained_attention},
-        # Flip both
-        {'cross_modal': not config.use_cross_modal_attention, 'fine_grained': not config.use_fine_grained_attention},
-    ]
-
-    for i, cfg_try in enumerate(configs_to_try):
-        config.use_cross_modal_attention = cfg_try['cross_modal']
-        config.use_fine_grained_attention = cfg_try['fine_grained']
-
-        print(f"\n   Trying config {i+1}/4: cross_modal={cfg_try['cross_modal']}, fine_grained={cfg_try['fine_grained']}")
-
-        m = ALIGNN(config)
-        model_dict = m.state_dict()
-
-        # Count matching weights
-        matched = sum(1 for k, v in checkpoint_state.items()
-                     if k in model_dict and v.shape == model_dict[k].shape)
-
-        if matched > best_loaded:
-            best_loaded = matched
-            best_model = m
-            best_config = cfg_try.copy()
-
-        # Perfect match found
-        if matched == len(checkpoint_state):
-            break
-
-    # Use best config
-    config.use_cross_modal_attention = best_config['cross_modal']
-    config.use_fine_grained_attention = best_config['fine_grained']
-    print(f"\n   Best config: cross_modal={best_config['cross_modal']}, fine_grained={best_config['fine_grained']}")
-    print(f"   Matched {best_loaded}/{len(checkpoint_state)} weights")
-
-    model = load_model_flexible(config, checkpoint_state)
+    model.load_state_dict(checkpoint_state, strict=False)
 
     model = model.to(device)
     model.eval()
 
     print("✅ Model loaded successfully")
-    print(f"   - Final config: use_cross_modal_attention={config.use_cross_modal_attention}")
-    if hasattr(config, 'use_fine_grained_attention') and config.use_fine_grained_attention:
-        print(f"   - Fine-grained attention heads: {config.fine_grained_num_heads}")
-        print(f"   - Hidden dimension: {config.fine_grained_hidden_dim}")
 
     return model, config
 
