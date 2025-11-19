@@ -846,8 +846,9 @@ class EnhancedInterpretabilityAnalyzer:
                     current_indices.append(i)
                 elif token == '-' and current_token:
                     # Check if this is part of space group or N-coordinate pattern
-                    if current_token[0] in space_group_starters and len(current_token) <= 4:
-                        # Space group pattern (F-43m, P-1)
+                    # Use upper() for case-insensitive space group detection (BERT lowercases)
+                    if current_token[0].upper() in space_group_starters and len(current_token) <= 4:
+                        # Space group pattern (F-43m, P-1, f-43m)
                         current_token += token
                         current_indices.append(i)
                         in_space_group = True
@@ -867,7 +868,8 @@ class EnhancedInterpretabilityAnalyzer:
                         current_indices = [i]
                 elif token == '/' and current_token:
                     # Merge "/" for space groups (I4/mmm, P63/mmc)
-                    if current_token[0] in space_group_starters:
+                    # Use upper() for case-insensitive detection
+                    if current_token[0].upper() in space_group_starters:
                         current_token += token
                         current_indices.append(i)
                         in_space_group = True
@@ -894,7 +896,8 @@ class EnhancedInterpretabilityAnalyzer:
                 elif token.isdigit() and current_token and not current_token[-1].isdigit():
                     # Only merge numbers with atom symbols or space group starters
                     # NOT with regular words like "bonded"
-                    if current_token in atom_symbols or current_token[0] in space_group_starters:
+                    # Check both original case and capitalized for atom symbols
+                    if current_token in atom_symbols or current_token.capitalize() in atom_symbols or current_token[0].upper() in space_group_starters:
                         current_token += token
                         current_indices.append(i)
                     else:
@@ -919,8 +922,8 @@ class EnhancedInterpretabilityAnalyzer:
                     # Start new token
                     current_token = token
                     current_indices = [i]
-                    # Check if starting a space group
-                    if token in space_group_starters:
+                    # Check if starting a space group (case-insensitive)
+                    if token.upper() in space_group_starters:
                         in_space_group = True
                     else:
                         in_space_group = False
