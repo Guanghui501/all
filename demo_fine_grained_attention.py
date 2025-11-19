@@ -53,22 +53,23 @@ def load_model_with_fine_grained_attention(checkpoint_path, device='cuda'):
         # Infer configurations from state_dict keys
         state_keys = list(model_state.keys())
 
-        # Check for cross_modal_attention
-        use_cross_modal = any('cross_modal_attention' in k for k in state_keys)
+        # Primary method: Use fc1.weight shape to determine use_cross_modal_attention
+        # This is the most reliable indicator
+        use_cross_modal = False
+        if 'fc1.weight' in model_state:
+            fc1_shape = model_state['fc1.weight'].shape
+            # fc1.weight shape [64, 64] means cross-modal (input=64), [64, 128] means concat (input=128)
+            use_cross_modal = (fc1_shape[1] == 64)
+            print(f"   - fc1.weight shape: {fc1_shape}")
+        else:
+            # Fallback: check for cross_modal_attention keys
+            use_cross_modal = any('cross_modal_attention' in k for k in state_keys)
 
         # Check for middle_fusion
         use_middle_fusion = any('middle_fusion' in k for k in state_keys)
 
         # Check for fine_grained_attention
         use_fine_grained = any('fine_grained_attention' in k for k in state_keys)
-
-        # Also check fc1 shape as backup
-        if 'fc1.weight' in model_state:
-            fc1_shape = model_state['fc1.weight'].shape
-            # fc1.weight shape [64, 64] means cross-modal (input=64), [64, 128] means concat (input=128)
-            if not use_cross_modal:
-                use_cross_modal = (fc1_shape[1] == 64)
-            print(f"   - fc1.weight shape: {fc1_shape}")
 
         print(f"   - Inferred use_cross_modal_attention: {use_cross_modal}")
         print(f"   - Inferred use_middle_fusion: {use_middle_fusion}")
