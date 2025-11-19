@@ -1457,7 +1457,7 @@ class EnhancedInterpretabilityAnalyzer:
             elif word_lower in structure_keywords:
                 semantic_categories['structure_information'].append(pair)
                 categorized = True
-            elif word_lower in bonding_keywords or 'bond' in word_lower:
+            elif word_lower in bonding_keywords or 'bond' in word_lower or 'coordinate' in word_lower:
                 semantic_categories['bonding_information'].append(pair)
                 categorized = True
             elif word_lower in geometry_keywords:
