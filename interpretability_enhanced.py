@@ -816,18 +816,45 @@ class EnhancedInterpretabilityAnalyzer:
                 merged_weights: numpy array with merged weights
                 token_mapping: list mapping merged index to original indices
             """
+            # Space group starting letters (Bravais lattice symbols)
+            space_group_starters = {'P', 'I', 'F', 'R', 'C', 'A', 'B'}
+            # Characters that are part of space group notation
+            space_group_chars = {'-', '/', 'm', 'n', 'c', 'a', 'b', 'd', 'e'}
+
             merged_tokens = []
             token_mapping = []  # Each element is a list of original indices
             current_token = ""
             current_indices = []
+            in_space_group = False  # Track if we're in a space group symbol
 
             for i, token in enumerate(tokens):
                 if token.startswith("##"):
-                    # Continue previous token
+                    # Continue previous token (WordPiece continuation)
                     current_token += token[2:]
                     current_indices.append(i)
-                elif token in ['-', '_', '.', '(', ')', '[', ']'] and current_token:
-                    # Merge punctuation with previous token
+                elif token in ['-', '/', '_'] and current_token:
+                    # Merge these punctuation with previous token
+                    # Common in space groups (F-43m, I4/mmm, P63/mmc)
+                    current_token += token
+                    current_indices.append(i)
+                    # Check if this looks like a space group
+                    if len(current_token) >= 1 and current_token[0] in space_group_starters:
+                        in_space_group = True
+                elif in_space_group and (token.isdigit() or (token.lower() in space_group_chars) or
+                                         (token.isalpha() and len(token) <= 2)):
+                    # Continue space group: merge numbers, m/n/c/a/b/d letters
+                    current_token += token
+                    current_indices.append(i)
+                elif token in ['(', ')'] and current_token:
+                    # Merge parentheses (e.g., for atom labels like Li(1))
+                    current_token += token
+                    current_indices.append(i)
+                elif token.isdigit() and current_token and not current_token[-1].isdigit():
+                    # Merge numbers after non-digits (e.g., Ba4, Li1, P63)
+                    current_token += token
+                    current_indices.append(i)
+                elif token == '.' and current_token:
+                    # Merge decimal points
                     current_token += token
                     current_indices.append(i)
                 else:
@@ -835,9 +862,15 @@ class EnhancedInterpretabilityAnalyzer:
                     if current_token:
                         merged_tokens.append(current_token)
                         token_mapping.append(current_indices)
+                        in_space_group = False
                     # Start new token
                     current_token = token
                     current_indices = [i]
+                    # Check if starting a space group
+                    if token in space_group_starters:
+                        in_space_group = True
+                    else:
+                        in_space_group = False
 
             # Don't forget the last token
             if current_token:
