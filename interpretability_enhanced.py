@@ -857,42 +857,85 @@ class EnhancedInterpretabilityAnalyzer:
 
             plt.tight_layout()
         else:
-            # Show averaged attention
-            fig, axes = plt.subplots(1, 2, figsize=(20, max(8, num_atoms * 0.5)))
+            # Show averaged attention with only top-k atoms and words
+            fig, axes = plt.subplots(1, 2, figsize=(16, 10))
 
-            # Atom-to-Text attention heatmap
+            # Select top-k atoms and words based on importance
             if atom_to_text_avg is not None:
+                # Calculate importance scores
+                atom_importance = atom_to_text_avg.mean(axis=1)  # [num_atoms]
+                word_importance = atom_to_text_avg.mean(axis=0)  # [seq_len]
+
+                # Get top-k indices
+                top_atom_indices = atom_importance.argsort()[-top_k_atoms:][::-1]
+                top_word_indices = word_importance.argsort()[-top_k_words:][::-1]
+
+                # Sort indices for better visualization
+                top_atom_indices = np.sort(top_atom_indices)
+                top_word_indices = np.sort(top_word_indices)
+
+                # Extract sub-matrix
+                atom_to_text_sub = atom_to_text_avg[np.ix_(top_atom_indices, top_word_indices)]
+
+                # Get labels for selected items
+                selected_atoms = [f"{elements[i]}-{i}" for i in top_atom_indices]
+                selected_words = [text_tokens[i] if i < len(text_tokens) else f"[{i}]" for i in top_word_indices]
+
+                # Atom-to-Text attention heatmap (filtered)
                 sns.heatmap(
-                    atom_to_text_avg,
-                    xticklabels=text_tokens[:seq_len],
-                    yticklabels=elements,
+                    atom_to_text_sub,
+                    xticklabels=selected_words,
+                    yticklabels=selected_atoms,
                     cmap='YlOrRd',
                     ax=axes[0],
                     cbar=True,
-                    annot=num_atoms <= 10 and seq_len <= 20  # Only annotate if small enough
+                    annot=top_k_atoms <= 15 and top_k_words <= 15,
+                    fmt='.2f' if top_k_atoms <= 15 and top_k_words <= 15 else None
                 )
-                axes[0].set_title('Atom → Text Attention\n(Which words does each atom attend to?)', fontsize=12)
-                axes[0].set_xlabel('Text Tokens', fontsize=10)
-                axes[0].set_ylabel('Atoms (Element)', fontsize=10)
-                plt.setp(axes[0].get_xticklabels(), rotation=45, ha='right', fontsize=8)
+                axes[0].set_title(f'Atom → Text Attention\n(Top {top_k_atoms} atoms × Top {top_k_words} words)', fontsize=12)
+                axes[0].set_xlabel('Text Tokens (High Importance)', fontsize=10)
+                axes[0].set_ylabel('Atoms (High Importance)', fontsize=10)
+                plt.setp(axes[0].get_xticklabels(), rotation=45, ha='right', fontsize=9)
+                plt.setp(axes[0].get_yticklabels(), fontsize=9)
 
-            # Text-to-Atom attention heatmap
+            # Text-to-Atom attention heatmap (filtered)
             if text_to_atom_avg is not None:
+                # Calculate importance scores
+                word_importance_t2a = text_to_atom_avg.mean(axis=1)  # [seq_len]
+                atom_importance_t2a = text_to_atom_avg.mean(axis=0)  # [num_atoms]
+
+                # Get top-k indices
+                top_word_indices_t2a = word_importance_t2a.argsort()[-top_k_words:][::-1]
+                top_atom_indices_t2a = atom_importance_t2a.argsort()[-top_k_atoms:][::-1]
+
+                # Sort indices
+                top_word_indices_t2a = np.sort(top_word_indices_t2a)
+                top_atom_indices_t2a = np.sort(top_atom_indices_t2a)
+
+                # Extract sub-matrix
+                text_to_atom_sub = text_to_atom_avg[np.ix_(top_word_indices_t2a, top_atom_indices_t2a)]
+
+                # Get labels
+                selected_words_t2a = [text_tokens[i] if i < len(text_tokens) else f"[{i}]" for i in top_word_indices_t2a]
+                selected_atoms_t2a = [f"{elements[i]}-{i}" for i in top_atom_indices_t2a]
+
                 sns.heatmap(
-                    text_to_atom_avg,
-                    xticklabels=elements,
-                    yticklabels=text_tokens[:seq_len],
+                    text_to_atom_sub,
+                    xticklabels=selected_atoms_t2a,
+                    yticklabels=selected_words_t2a,
                     cmap='YlGnBu',
                     ax=axes[1],
                     cbar=True,
-                    annot=num_atoms <= 10 and seq_len <= 20
+                    annot=top_k_atoms <= 15 and top_k_words <= 15,
+                    fmt='.2f' if top_k_atoms <= 15 and top_k_words <= 15 else None
                 )
-                axes[1].set_title('Text → Atom Attention\n(Which atoms does each word attend to?)', fontsize=12)
-                axes[1].set_xlabel('Atoms (Element)', fontsize=10)
-                axes[1].set_ylabel('Text Tokens', fontsize=10)
-                plt.setp(axes[1].get_yticklabels(), rotation=0, fontsize=8)
+                axes[1].set_title(f'Text → Atom Attention\n(Top {top_k_words} words × Top {top_k_atoms} atoms)', fontsize=12)
+                axes[1].set_xlabel('Atoms (High Importance)', fontsize=10)
+                axes[1].set_ylabel('Text Tokens (High Importance)', fontsize=10)
+                plt.setp(axes[1].get_xticklabels(), rotation=45, ha='right', fontsize=9)
+                plt.setp(axes[1].get_yticklabels(), fontsize=9)
 
-            plt.suptitle('Fine-Grained Cross-Modal Attention', fontsize=14, fontweight='bold')
+            plt.suptitle('Fine-Grained Cross-Modal Attention (Filtered by Importance)', fontsize=14, fontweight='bold')
             plt.tight_layout()
 
         if save_path:
