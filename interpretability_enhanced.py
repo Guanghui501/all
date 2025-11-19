@@ -838,6 +838,7 @@ class EnhancedInterpretabilityAnalyzer:
             current_indices = []
             in_space_group = False  # Track if we're in a space group symbol
             in_coordinate = False  # Track if we're in a N-coordinate pattern
+            in_parentheses = False  # Track if we're inside parentheses like Ba(1)
 
             for i, token in enumerate(tokens):
                 if token.startswith("##"):
@@ -889,8 +890,18 @@ class EnhancedInterpretabilityAnalyzer:
                     # Continue space group: merge numbers, m/n/c/a/b/d letters
                     current_token += token
                     current_indices.append(i)
-                elif token in ['(', ')'] and current_token:
-                    # Merge parentheses (e.g., for atom labels like Li(1))
+                elif token == '(' and current_token:
+                    # Merge opening parentheses (e.g., for atom labels like Li(1))
+                    current_token += token
+                    current_indices.append(i)
+                    in_parentheses = True
+                elif token == ')' and current_token and in_parentheses:
+                    # Merge closing parentheses
+                    current_token += token
+                    current_indices.append(i)
+                    in_parentheses = False
+                elif in_parentheses and (token.isdigit() or token.isalpha()):
+                    # Merge content inside parentheses (digits or letters)
                     current_token += token
                     current_indices.append(i)
                 elif token.isdigit() and current_token and not current_token[-1].isdigit():
@@ -922,6 +933,7 @@ class EnhancedInterpretabilityAnalyzer:
                         token_mapping.append(current_indices)
                         in_space_group = False
                         in_coordinate = False
+                        in_parentheses = False
                     # Start new token
                     current_token = token
                     current_indices = [i]
